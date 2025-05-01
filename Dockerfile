@@ -22,7 +22,7 @@ ENV GOOS=linux
 ENV GOARCH=amd64
 ENV CGO_ENABLED=0
 
-RUN go build -o /app/controller ./cmd/server
+RUN go build -o /app/controller ./cmd/controller
 
 # Create a smaller runtime image
 FROM debian:bullseye-slim
