@@ -64,10 +64,8 @@ func (s *Server) StreamEvents(stream pb.TelemetryService_StreamEventsServer) err
 			continue
 		}
 
-		// Send configuration updates if needed
-		if err := s.sendConfigUpdate(stream); err != nil {
-			log.Printf("Error sending config update to agent %s: %v", agentID, err)
-		}
+		// Note: Config updates should be sent only when there are actual changes
+		// Not after every event as it can overwhelm the agent
 	}
 }
 
