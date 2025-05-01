@@ -31,7 +31,7 @@ spec:
       containers:
         - name: controller
           image: rasp-controller:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 50051
               name: grpc
