@@ -45,10 +45,12 @@ spec:
           livenessProbe:
             exec:
               command: ["/bin/grpc_health_probe", "-addr=:50051"]
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 1
           readinessProbe:
             exec:
               command: ["/bin/grpc_health_probe", "-addr=:50051"]
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 1
