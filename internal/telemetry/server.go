@@ -55,6 +55,8 @@ func (s *Server) StreamEvents(stream pb.TelemetryService_StreamEventsServer) err
 			return nil
 		}
 		if err != nil {
+			// Log the specific error before returning
+			log.Printf("ERROR receiving event from agent %s: %v", agentID, err)
 			return status.Errorf(codes.Unknown, "failed to receive event: %v", err)
 		}
 
