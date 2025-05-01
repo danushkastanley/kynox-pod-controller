@@ -10,9 +10,11 @@ import (
 	"syscall"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
 	pb "github.com/danushkastanley/rasp-controller/pkg/api/proto"
+	"github.com/danushkastanley/rasp-controller/internal/health"
 	"github.com/danushkastanley/rasp-controller/internal/telemetry"
 )
 
@@ -35,6 +37,10 @@ func main() {
 	// Create and register telemetry server
 	telemetryServer := telemetry.NewServer()
 	pb.RegisterTelemetryServiceServer(s, telemetryServer)
+
+	// Create and register health server
+	healthServer := &health.Server{}
+	grpc_health_v1.RegisterHealthServer(s, healthServer)
 
 	// Register reflection service for debugging
 	reflection.Register(s)
