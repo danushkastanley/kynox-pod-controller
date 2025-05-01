@@ -8,6 +8,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
+# Install protoc-gen-go and protoc-gen-go-grpc
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
 # Copy go mod files
 COPY go.mod go.sum ./
 RUN go mod download
