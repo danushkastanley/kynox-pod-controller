@@ -4,7 +4,7 @@ FROM golang:1.21 AS builder
 WORKDIR /app
 
 # Install protoc and required tools
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,7 +28,8 @@ FROM ubuntu:22.04
 
 WORKDIR /
 
-# Install grpc-health-probe
+# Install grpc-health-probe with noninteractive frontend
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     wget \
     && wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64 \
