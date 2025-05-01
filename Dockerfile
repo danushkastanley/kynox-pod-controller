@@ -6,11 +6,13 @@ WORKDIR /app
 # Copy everything
 COPY . .
 
-# Install protobuf compiler and grpc-health-probe
-RUN apt-get update && apt-get install -y protobuf-compiler && \
+# Install dependencies and grpc-health-probe
+RUN apt-get update && apt-get install -y protobuf-compiler curl && \
     go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28 && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2 && \
-    GOBIN=/tmp go install github.com/grpc-ecosystem/grpc-health-probe@latest && \
+    # Download pre-compiled grpc-health-probe
+    curl -Lo /tmp/grpc-health-probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.37/grpc-health-probe-linux-amd64 && \
+    chmod +x /tmp/grpc-health-probe && \
     echo "--- Checking for health probe in /tmp ---" && \
     ls -l /tmp
 
