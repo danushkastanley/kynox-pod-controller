@@ -31,7 +31,7 @@ spec:
       containers:
         - name: controller
           image: rasp-controller:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 50051
               name: grpc
@@ -44,13 +44,17 @@ spec:
               memory: "512Mi"
           livenessProbe:
             exec:
-              command: ["/bin/grpc_health_probe", "-addr=:50051"]
+              command:
+                - /usr/local/bin/grpc_health_probe
+                - -addr=:50051
             initialDelaySeconds: 3
             periodSeconds: 5
             timeoutSeconds: 1
           readinessProbe:
             exec:
-              command: ["/bin/grpc_health_probe", "-addr=:50051"]
+              command:
+                - /usr/local/bin/grpc_health_probe
+                - -addr=:50051
             initialDelaySeconds: 2
             periodSeconds: 5
             timeoutSeconds: 1
