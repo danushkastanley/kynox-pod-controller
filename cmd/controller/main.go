@@ -4,16 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/danushkastanley/rasp-controller/pkg/telemetry"
 )
@@ -21,11 +26,42 @@ import (
 // TelemetryServer implements the TelemetryService gRPC service
 type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
+	mu      sync.RWMutex
+	streams map[string]pb.TelemetryService_StreamEventsServer
+	ready   bool
+}
+
+// NewTelemetryServer creates a new telemetry server instance
+func NewTelemetryServer() *TelemetryServer {
+	return &TelemetryServer{
+		streams: make(map[string]pb.TelemetryService_StreamEventsServer),
+	}
 }
 
 // StreamEvents handles streaming security events from agents
 func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsServer) error {
 	log.Println("Agent connected to stream events")
+
+	// Get agent ID from context or metadata
+	agentID := fmt.Sprintf("agent-%d", len(s.streams)+1)
+
+	// Register stream
+	s.mu.Lock()
+	s.streams[agentID] = stream
+	if !s.ready {
+		s.ready = true
+	}
+	s.mu.Unlock()
+
+	// Cleanup on exit
+	defer func() {
+		s.mu.Lock()
+		delete(s.streams, agentID)
+		if len(s.streams) == 0 {
+			s.ready = false
+		}
+		s.mu.Unlock()
+	}()
 
 	// Send initial configuration
 	config := &pb.TelemetryConfig{
@@ -50,14 +86,18 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 	// Process incoming events
 	for {
 		event, err := stream.Recv()
+		if err == io.EOF {
+			log.Printf("Agent %s disconnected", agentID)
+			return nil
+		}
 		if err != nil {
-			log.Printf("Stream closed: %v", err)
-			return err
+			log.Printf("Error receiving from agent %s: %v", agentID, err)
+			return status.Errorf(codes.Unknown, "failed to receive event: %v", err)
 		}
 
 		// Print event details
 		eventJSON, _ := json.MarshalIndent(event, "", "  ")
-		log.Printf("Received event: %s", string(eventJSON))
+		log.Printf("Received event from agent %s: %s", agentID, string(eventJSON))
 	}
 }
 
@@ -130,12 +170,32 @@ func main() {
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
-	pb.RegisterTelemetryServiceServer(grpcServer, &TelemetryServer{})
+
+	// Create and register telemetry server
+	telemetryServer := NewTelemetryServer()
+	pb.RegisterTelemetryServiceServer(grpcServer, telemetryServer)
 	
-	// Register health service
+	// Create health server
 	healthServer := health.NewServer()
-	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(grpcServer, healthServer)
+
+	// Start health check goroutine
+	go func() {
+		for {
+			telemetryServer.mu.RLock()
+			ready := telemetryServer.ready
+			telemetryServer.mu.RUnlock()
+
+			if ready {
+				healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+			} else {
+				healthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+			}
+
+			// Check every second
+			time.Sleep(time.Second)
+		}
+	}()
 	
 	// Enable reflection for debugging
 	reflection.Register(grpcServer)
