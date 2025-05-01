@@ -1,8 +1,6 @@
-module github.com/danushkastanley/rasp-controller
+module pod-controller
 
-go 1.24
-
-toolchain go1.24.1
+go 1.20
 
 require (
 	google.golang.org/grpc v1.58.3

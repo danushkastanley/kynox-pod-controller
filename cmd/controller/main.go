@@ -7,14 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	pb "github.com/danushkastanley/rasp-controller/pkg/api/proto"
-	health_internal "github.com/danushkastanley/rasp-controller/internal/health"
-	telemetry_internal "github.com/danushkastanley/rasp-controller/internal/telemetry"
+	"pod-controller/pkg/server"
+	pb "pod-controller/pkg/telemetry"
 )
 
 func main() {
@@ -33,13 +32,9 @@ func main() {
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
-	// Create and register telemetry server using internal package
-	telemetryServer := telemetry_internal.NewServer()
+	// Create and register telemetry server
+	telemetryServer := server.NewTelemetryServer(5 * time.Minute) // 5 minute timeout for inactive agents
 	pb.RegisterTelemetryServiceServer(grpcServer, telemetryServer)
-
-	// Create and register health server using internal package
-	healthServer := &health_internal.Server{} // Instantiate the server struct
-	healthpb.RegisterHealthServer(grpcServer, healthServer)
 
 	// Enable reflection for debugging
 	reflection.Register(grpcServer)
@@ -51,6 +46,9 @@ func main() {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
+
+	// Start cleanup goroutine
+	go telemetryServer.CleanupInactiveAgents()
 
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
