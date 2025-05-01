@@ -31,7 +31,7 @@ WORKDIR /app
 
 # Copy the compiled binary and health probe
 COPY --from=builder /app/controller /app/controller
-COPY --from=builder /tmp/grpc-health-probe /bin/grpc-health-probe
+COPY --from=builder /tmp/grpc-health-probe /usr/local/bin/grpc-health-probe
 
 # Set environment variables
 ENV PORT=50051
