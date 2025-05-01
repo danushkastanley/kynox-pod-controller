@@ -1,5 +1,5 @@
 # Build stage
-FROM --platform=linux/amd64 golang:1.21-bullseye as builder
+FROM --platform=linux/amd64 golang:1.24-bullseye as builder
 
 WORKDIR /app
 
