@@ -3,13 +3,7 @@ FROM golang:1.24-bullseye as builder
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first for better caching
-COPY go.mod go.sum ./
-
-# Download dependencies
-RUN go mod download
-
-# Copy the source code
+# Copy everything
 COPY . .
 
 # Install protobuf compiler and grpc-health-probe
@@ -18,11 +12,17 @@ RUN apt-get update && apt-get install -y protobuf-compiler && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2 && \
     GOBIN=/tmp go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
-# Generate protobuf code
-RUN protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/api/proto/telemetry.proto
+# Generate protobuf code and update dependencies
+RUN protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/api/proto/telemetry.proto && \
+    go mod tidy
 
 # Build the controller
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/controller ./cmd/controller
+ENV GO111MODULE=on
+ENV GOOS=linux
+ENV GOARCH=amd64
+ENV CGO_ENABLED=0
+
+RUN go build -o /app/controller ./cmd/server
 
 # Create a smaller runtime image
 FROM debian:bullseye-slim
