@@ -33,7 +33,7 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	}
 }
 
-func (s *TelemetryServer) Connect(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
+func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	if req.AgentId == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}

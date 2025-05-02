@@ -99,7 +99,7 @@ message SendEventsResponse {
 // Telemetry service definition
 service TelemetryService {
   // Establish connection with controller
-  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc ConnectAgent(ConnectRequest) returns (ConnectResponse);
   
   // Maintain connection with heartbeat
   rpc SendHeartbeat(Heartbeat) returns (ConnectionStatus);
