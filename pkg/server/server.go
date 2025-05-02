@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	pb "pod-controller/pkg/telemetry"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -35,7 +37,15 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 
 func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	if req.AgentId == "" {
+		log.Printf("❌ Connection rejected: missing agent_id")
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
+	}
+
+	// Get peer info
+	p, ok := peer.FromContext(ctx)
+	clientAddr := "unknown"
+	if ok {
+		clientAddr = p.Addr.String()
 	}
 
 	sessionID := generateSessionID()
@@ -48,6 +58,15 @@ func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectReque
 	}
 
 	s.mu.Lock()
+	// Check if agent already exists
+	if existingAgent, exists := s.agents[req.AgentId]; exists {
+		log.Printf("⚠️  Agent %s reconnecting from %s (old session: %s)", req.AgentId, clientAddr, existingAgent.SessionID)
+	} else {
+		log.Printf("✅ New agent connecting from %s:", clientAddr)
+		log.Printf("   Agent ID: %s", req.AgentId)
+		log.Printf("   Node: %s", req.NodeName)
+		log.Printf("   Pod: %s", req.PodName)
+	}
 	s.agents[req.AgentId] = agent
 	s.mu.Unlock()
 
@@ -62,6 +81,7 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 	agent, exists := s.agents[req.AgentId]
 	if !exists {
 		s.mu.Unlock()
+		log.Printf("❌ Heartbeat failed: unknown agent %s", req.AgentId)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
 			AgentId:     req.AgentId,
@@ -71,6 +91,8 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 
 	if agent.SessionID != req.SessionId {
 		s.mu.Unlock()
+		log.Printf("❌ Heartbeat failed: invalid session for agent %s (got: %s, want: %s)", 
+			req.AgentId, req.SessionId, agent.SessionID)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
 			AgentId:     req.AgentId,
@@ -78,8 +100,15 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 		}, nil
 	}
 
+	lastSeen := agent.LastSeen
 	agent.LastSeen = time.Now()
 	s.mu.Unlock()
+
+	// Log heartbeat but not too frequently to avoid spam
+	if time.Since(lastSeen) > time.Second*30 {
+		log.Printf("💓 Heartbeat from agent %s (node: %s, pod: %s)", 
+			agent.AgentID, agent.NodeName, agent.PodName)
+	}
 
 	return &pb.ConnectionStatus{
 		Status:   pb.ConnectionStatus_CONNECTED,
@@ -131,6 +160,8 @@ func (s *TelemetryServer) CleanupInactiveAgents() {
 		s.mu.Lock()
 		for id, agent := range s.agents {
 			if now.Sub(agent.LastSeen) > s.timeout {
+				log.Printf("⚠️  Removing inactive agent %s (node: %s, pod: %s, last seen: %s ago)",
+					id, agent.NodeName, agent.PodName, now.Sub(agent.LastSeen).Round(time.Second))
 				delete(s.agents, id)
 			}
 		}
