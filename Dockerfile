@@ -8,10 +8,13 @@ COPY go.mod go.sum ./
 COPY pkg/ pkg/
 COPY cmd/ cmd/
 
-# Install protoc and Go plugins
-RUN apt-get update && apt-get install -y protobuf-compiler && \
+# Install protoc, Go plugins, and grpc-health-probe
+RUN apt-get update && apt-get install -y protobuf-compiler wget && \
     go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28 && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2 && \
+    GRPC_HEALTH_PROBE_VERSION=v0.4.19 && \
+    wget -qO/go/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 && \
+    chmod +x /go/bin/grpc_health_probe
 
 # Generate protobuf code and update dependencies
 RUN protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/telemetry/telemetry.proto && \
@@ -25,6 +28,7 @@ FROM --platform=linux/amd64 gcr.io/distroless/static:nonroot
 
 WORKDIR /app
 COPY --from=builder /app/controller .
+COPY --from=builder /go/bin/grpc_health_probe /usr/local/bin/grpc-health-probe
 
 EXPOSE 50051
 USER nonroot:nonroot
