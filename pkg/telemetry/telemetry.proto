@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package telemetry;
+
+option go_package = "pod-controller/pkg/telemetry";
+
+import "google/protobuf/timestamp.proto";
+
+// Connection status for an agent
+message ConnectionStatus {
+  enum Status {
+    CONNECTED = 0;
+    DISCONNECTED = 1;
+    ERROR = 2;
+  }
+  Status status = 1;
+  string agent_id = 2;
+  string error_message = 3;
+}
+
+// Connection request from agent
+message ConnectRequest {
+  string agent_id = 1;
+  string node_name = 2;
+  string pod_name = 3;
+}
+
+// Connection response from controller
+message ConnectResponse {
+  bool success = 1;
+  string error_message = 2;
+  string session_id = 3;
+}
+
+// Heartbeat message
+message Heartbeat {
+  string agent_id = 1;
+  string session_id = 2;
+}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EXEC = 1;
+  OPEN = 2;
+  CONNECT = 3;
+  ACCEPT = 4; // Added for server-side connections
+  SETUID = 5;
+  CAPSET = 6; // For capability changes
+  // Add other relevant event types as needed
+  // Added based on BPF constants
+  FORK = 7;
+  PTRACE = 8;
+  SETGID = 9;
+  MOUNT = 10;
+  UMOUNT = 11;
+  BPF_PROG = 12;
+  SECCOMP = 13;
+  SOCKET = 14;
+  BIND = 15;
+  // Added based on Rust match arms (may need BPF implementation)
+  EXIT = 16; 
+  READ = 17;
+  WRITE = 18;
+  CLOSE = 19; // Was also in Rust match
+  LISTEN = 20;
+  SEND = 21;
+  RECV = 22;
+}
+
+// Security event message
+message SecurityEvent {
+  EventType event_type = 1;
+  int32 pid = 2;
+  int32 ppid = 3;
+  string command = 4; // Command name (from comm)
+  string file_path = 5; // File path (for open, exec)
+  google.protobuf.Timestamp timestamp = 8;
+  string destination_ip = 9;  // Destination IP (for connect)
+  int32 destination_port = 10; // Destination Port (for connect)
+  string source_ip = 11;      // Source IP (for accept)
+  int32 source_port = 12;      // Source Port (for accept)
+  int32 uid = 13; // User ID (for setuid)
+  int32 gid = 14; // Group ID (for setgid)
+  int64 ptrace_request = 15; // Ptrace request code
+  int32 ptrace_target_pid = 16; // Ptrace target PID
+  // Consider adding capabilities, return codes, etc.
+  // uint64 capabilities = 13; // Example
+  // int32 return_code = 14; // Example
+  // Add fields for mount, capset etc. as needed later.
+  map<string, string> container_context = 20; // Optional: e.g., pod_name, namespace
+}
+
+// Response for sending events
+message SendEventsResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// Telemetry service definition
+service TelemetryService {
+  // Establish connection with controller
+  rpc ConnectAgent(ConnectRequest) returns (ConnectResponse);
+  
+  // Maintain connection with heartbeat
+  rpc SendHeartbeat(Heartbeat) returns (ConnectionStatus);
+  
+  // Stream security events from agent to controller
+  rpc StreamEvents(stream SecurityEvent) returns (SendEventsResponse);
+}

@@ -1,47 +1,36 @@
 # Build stage
-FROM golang:1.21 AS builder
+FROM --platform=linux/amd64 golang:1.24-bullseye as builder
 
 WORKDIR /app
 
-# Install protoc and required tools
-RUN apt-get update && apt-get install -y \
-    protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy go mod files
+# Copy only necessary files for building
 COPY go.mod go.sum ./
-RUN go mod download
+COPY pkg/ pkg/
+COPY cmd/ cmd/
 
-# Copy source code
-COPY . .
+# Install protoc, Go plugins, and grpc-health-probe
+RUN apt-get update && apt-get install -y protobuf-compiler wget && \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28 && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2 && \
+    GRPC_HEALTH_PROBE_VERSION=v0.4.19 && \
+    wget -qO/go/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 && \
+    chmod +x /go/bin/grpc_health_probe
 
-# Generate protobuf files
-RUN protoc --go_out=. --go_opt=paths=source_relative \
-    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-    pkg/api/proto/telemetry.proto
+# Generate protobuf code and update dependencies
+RUN protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative pkg/telemetry/telemetry.proto && \
+    go mod tidy
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o /rasp-controller ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /app/controller ./cmd/controller
 
-# Final stage
-FROM ubuntu:22.04
+# Create final image
+FROM --platform=linux/amd64 gcr.io/distroless/static:nonroot
 
-WORKDIR /
+WORKDIR /app
+COPY --from=builder /app/controller .
+COPY --from=builder /go/bin/grpc_health_probe /usr/local/bin/grpc-health-probe
 
-# Install grpc-health-probe
-RUN apt-get update && apt-get install -y \
-    wget \
-    && wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64 \
-    && chmod +x /bin/grpc_health_probe \
-    && apt-get remove -y wget \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy the binary from builder
-COPY --from=builder /rasp-controller .
-
-# Expose gRPC port
 EXPOSE 50051
+USER nonroot:nonroot
 
-# Run the service
-ENTRYPOINT ["/rasp-controller"]
+ENTRYPOINT ["/app/controller"]
