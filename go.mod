@@ -3,6 +3,8 @@ module pod-controller
 go 1.21
 
 require (
+	github.com/google/uuid v1.3.1
+	github.com/joho/godotenv v1.5.1
 	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/grpc v1.58.2
 	google.golang.org/protobuf v1.31.0

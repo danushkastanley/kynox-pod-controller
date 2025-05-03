@@ -32,6 +32,17 @@ spec:
         - name: controller
           image: rasp-controller:latest
           imagePullPolicy: Never
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: LOG_LEVEL
+              value: "info"
           ports:
             - containerPort: 50051
               name: grpc

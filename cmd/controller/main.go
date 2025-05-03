@@ -16,9 +16,47 @@ import (
 	"pod-controller/pkg/health"
 	"pod-controller/pkg/server"
 	pb "pod-controller/pkg/telemetry"
+
+	"github.com/sirupsen/logrus"
 )
 
 func main() {
+	// Get node name from Kubernetes downward API
+	nodeName := os.Getenv("NODE_NAME")
+	if nodeName == "" {
+		// Fallback to hostname if not in K8s
+		var err error
+		nodeName, err = os.Hostname()
+		if err != nil {
+			logrus.Fatalf("Failed to get hostname: %v", err)
+		}
+	}
+
+	// Get pod name from Kubernetes downward API
+	podName := os.Getenv("POD_NAME")
+	if podName == "" {
+		// Generate a unique name for local development
+		podName = fmt.Sprintf("controller-%d", time.Now().Unix())
+	}
+
+	// Set up logging
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel != "" {
+		level, err := logrus.ParseLevel(logLevel)
+		if err != nil {
+			logrus.Warnf("Invalid log level %q, defaulting to info", logLevel)
+			logrus.SetLevel(logrus.InfoLevel)
+		} else {
+			logrus.SetLevel(level)
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"node": nodeName,
+		"pod":  podName,
+	}).Info("Starting RASP controller")
+
 	// Get port from environment or use default
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -3,11 +3,11 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"pod-controller/pkg/alert"
 	pb "pod-controller/pkg/telemetry"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -24,23 +24,31 @@ type ConnectedAgent struct {
 
 type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
-	mu       sync.RWMutex
-	agents   map[string]*ConnectedAgent // key: agent_id
-	timeout  time.Duration              // timeout for inactive agents
-	detector *ThreatDetector
+	mu        sync.RWMutex
+	agents    map[string]*ConnectedAgent // key: agent_id
+	timeout   time.Duration              // timeout for inactive agents
+	detector  *ThreatDetector
+	alerter   *alert.AlertDispatcher
 }
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
+	// Initialize alert dispatcher
+	alertDispatcher, err := alert.NewAlertDispatcher()
+	if err != nil {
+		logrus.Fatalf("Failed to initialize alert dispatcher: %v", err)
+	}
+
 	return &TelemetryServer{
-		agents:   make(map[string]*ConnectedAgent),
-		timeout:  timeout,
-		detector: NewThreatDetector(),
+		agents:    make(map[string]*ConnectedAgent),
+		timeout:   timeout,
+		detector:  NewThreatDetector(),
+		alerter:   alertDispatcher,
 	}
 }
 
 func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	if req.AgentId == "" {
-		log.Printf("❌ Connection rejected: missing agent_id")
+		logrus.Printf("❌ Connection rejected: missing agent_id")
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
@@ -63,12 +71,12 @@ func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectReque
 	s.mu.Lock()
 	// Check if agent already exists
 	if existingAgent, exists := s.agents[req.AgentId]; exists {
-		log.Printf("⚠️  Agent %s reconnecting from %s (old session: %s)", req.AgentId, clientAddr, existingAgent.SessionID)
+		logrus.Printf("⚠️  Agent %s reconnecting from %s (old session: %s)", req.AgentId, clientAddr, existingAgent.SessionID)
 	} else {
-		log.Printf("✅ New agent connecting from %s:", clientAddr)
-		log.Printf("   Agent ID: %s", req.AgentId)
-		log.Printf("   Node: %s", req.NodeName)
-		log.Printf("   Pod: %s", req.PodName)
+		logrus.Printf("✅ New agent connecting from %s:", clientAddr)
+		logrus.Printf("   Agent ID: %s", req.AgentId)
+		logrus.Printf("   Node: %s", req.NodeName)
+		logrus.Printf("   Pod: %s", req.PodName)
 	}
 	s.agents[req.AgentId] = agent
 	s.mu.Unlock()
@@ -84,7 +92,7 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 	agent, exists := s.agents[req.AgentId]
 	if !exists {
 		s.mu.Unlock()
-		log.Printf("❌ Heartbeat failed: unknown agent %s", req.AgentId)
+		logrus.Printf("❌ Heartbeat failed: unknown agent %s", req.AgentId)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
 			AgentId:     req.AgentId,
@@ -94,7 +102,7 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 
 	if agent.SessionID != req.SessionId {
 		s.mu.Unlock()
-		log.Printf("❌ Heartbeat failed: invalid session for agent %s (got: %s, want: %s)", 
+		logrus.Printf("❌ Heartbeat failed: invalid session for agent %s (got: %s, want: %s)", 
 			req.AgentId, req.SessionId, agent.SessionID)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
@@ -109,7 +117,7 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 
 	// Log heartbeat but not too frequently to avoid spam
 	if time.Since(lastSeen) > time.Second*30 {
-		log.Printf("💓 Heartbeat from agent %s (node: %s, pod: %s)", 
+		logrus.Printf("💓 Heartbeat from agent %s (node: %s, pod: %s)", 
 			agent.AgentID, agent.NodeName, agent.PodName)
 	}
 
@@ -193,11 +201,13 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	// Threat detection logic
 	var severity string
 	var message string
+	var alertLevel alert.AlertLevel
 
 	// Check for high-risk events first
 	if s.detector.isPrivilegedOperation(event) {
 		severity = "WARNING"
 		message = "Privileged operation detected"
+		alertLevel = alert.AlertLevelWarning
 	}
 
 	// Event-specific checks
@@ -206,53 +216,63 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		if s.detector.isSuspiciousCommand(event.GetCommand()) {
 			severity = "WARNING"
 			message = "Suspicious command execution detected"
+			alertLevel = alert.AlertLevelWarning
 		}
 		if s.detector.detectAnomalousProcessSpawning(event, containerId) {
 			severity = "WARNING"
 			message = "Anomalous process spawning detected"
+			alertLevel = alert.AlertLevelWarning
 		}
 
 	case pb.EventType_OPEN:
 		if s.detector.isSuspiciousFileAccess(event.GetFilePath()) {
 			severity = "WARNING"
 			message = "Sensitive file access detected"
+			alertLevel = alert.AlertLevelWarning
 		}
 
 	case pb.EventType_CONNECT:
 		if s.detector.isExternalConnection(event.GetDestinationIp()) {
 			severity = "WARNING"
 			message = "External network connection detected"
+			alertLevel = alert.AlertLevelWarning
 		}
 		if s.detector.detectAnomalousNetworkActivity(event, containerId) {
 			severity = "WARNING"
 			message = "Anomalous network activity detected"
+			alertLevel = alert.AlertLevelWarning
 		}
 
 	case pb.EventType_PTRACE:
 		if s.detector.isSuspiciousPtraceOperation(event.GetPtraceRequest(), event.GetPtraceTargetPid()) {
 			severity = "CRITICAL"
 			message = "Suspicious ptrace operation detected"
+			alertLevel = alert.AlertLevelCritical
 		}
 
 	case pb.EventType_SETUID:
 		if event.GetUid() == 0 {
 			severity = "CRITICAL"
 			message = "Potential privilege escalation detected"
+			alertLevel = alert.AlertLevelCritical
 		}
 
 	case pb.EventType_MOUNT:
 		if s.detector.isSuspiciousMount(event.GetFilePath()) {
 			severity = "CRITICAL"
 			message = "Suspicious mount operation detected"
+			alertLevel = alert.AlertLevelCritical
 		}
 
 	case pb.EventType_BPF_PROG:
 		severity = "CRITICAL"
 		message = "BPF program loading detected"
+		alertLevel = alert.AlertLevelCritical
 
 	case pb.EventType_SECCOMP:
 		severity = "WARNING"
 		message = "Seccomp filter modification detected"
+		alertLevel = alert.AlertLevelWarning
 	}
 
 	// Log with appropriate severity
@@ -266,6 +286,57 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			entry.Warn(message)
 		default:
 			entry.Info(message)
+		}
+
+		// Create and dispatch alert for WARNING and CRITICAL events
+		if alertLevel != "" {
+			alertContext := map[string]string{
+				"agent_id":     agent.AgentID,
+				"node_name":    agent.NodeName,
+				"pod_name":     agent.PodName,
+				"container_id": containerId,
+				"namespace":    namespace,
+				"event_type":   event.GetEventType().String(),
+				"command":      event.GetCommand(),
+			}
+
+			// Add process info
+			alertContext["proc_pid"] = fmt.Sprintf("%d", event.GetPid())
+			alertContext["proc_ppid"] = fmt.Sprintf("%d", event.GetPpid())
+			alertContext["proc_uid"] = fmt.Sprintf("%d", event.GetUid())
+			alertContext["proc_gid"] = fmt.Sprintf("%d", event.GetGid())
+
+			// Add network info if present
+			if event.GetSourceIp() != "" {
+				alertContext["net_src_ip"] = event.GetSourceIp()
+				alertContext["net_src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
+			}
+			if event.GetDestinationIp() != "" {
+				alertContext["net_dst_ip"] = event.GetDestinationIp()
+				alertContext["net_dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
+			}
+
+			// Add file info if present
+			if event.GetFilePath() != "" {
+				alertContext["file_path"] = event.GetFilePath()
+			}
+
+			// Add security info if present
+			if event.GetPtraceRequest() != 0 {
+				alertContext["sec_ptrace_req"] = fmt.Sprintf("%d", event.GetPtraceRequest())
+				alertContext["sec_ptrace_target"] = fmt.Sprintf("%d", event.GetPtraceTargetPid())
+			}
+
+			alert := alert.CreateAlert(
+				alertLevel,
+				fmt.Sprintf("%s: %s", severity, message),
+				fmt.Sprintf("Security event detected in pod %s/%s on node %s", namespace, podName, agent.NodeName),
+				alertContext,
+			)
+
+			if err := s.alerter.Dispatch(alert); err != nil {
+				entry.WithError(err).Error("Failed to dispatch alert")
+			}
 		}
 	} else {
 		entry.Info("Security event received")
@@ -281,7 +352,7 @@ func (s *TelemetryServer) CleanupInactiveAgents() {
 		s.mu.Lock()
 		for id, agent := range s.agents {
 			if now.Sub(agent.LastSeen) > s.timeout {
-				log.Printf("⚠️  Removing inactive agent %s (node: %s, pod: %s, last seen: %s ago)",
+				logrus.Printf("⚠️  Removing inactive agent %s (node: %s, pod: %s, last seen: %s ago)",
 					id, agent.NodeName, agent.PodName, now.Sub(agent.LastSeen).Round(time.Second))
 				delete(s.agents, id)
 			}
