@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"golang.org/x/time/rate"
 )
 
 type ConnectedAgent struct {
@@ -31,6 +32,7 @@ type TelemetryServer struct {
 	timeout    time.Duration
 	classifier *classifier.EventClassifier
 	alerter    *alert.AlertDispatcher
+	alertLimiter *rate.Limiter
 }
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
@@ -45,6 +47,7 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 		timeout:    timeout,
 		classifier: classifier.NewEventClassifier(),
 		alerter:    alertDispatcher,
+		alertLimiter: rate.NewLimiter(rate.Every(1*time.Second), 1), // 1 alert per second
 	}
 }
 
@@ -208,8 +211,26 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	// Classify the event
 	severity, message := s.classifier.ClassifyEvent(event)
 
+	// Log all events at appropriate level
+	switch severity {
+	case classifier.SeverityCritical:
+		logrus.WithFields(fields).Error(message)
+	case classifier.SeverityHigh:
+		logrus.WithFields(fields).Warn(message)
+	case classifier.SeverityWarn:
+		logrus.WithFields(fields).Info(message)
+	default:
+		logrus.WithFields(fields).Debug(message)
+	}
+
 	// Only process HIGH and CRITICAL events
 	if severity == classifier.SeverityHigh || severity == classifier.SeverityCritical {
+		// Check rate limit before sending alert
+		if !s.alertLimiter.Allow() {
+			logrus.WithFields(fields).Warn("Alert rate limited, skipping notification")
+			return nil
+		}
+
 		// Create alert context
 		alertContext := map[string]string{
 			"agent_id":     agent.AgentID,
