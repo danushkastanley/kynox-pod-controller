@@ -7,6 +7,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 COPY pkg/ pkg/
 COPY cmd/ cmd/
+COPY .env.example .env
 
 # Install protoc, Go plugins, and grpc-health-probe
 RUN apt-get update && apt-get install -y protobuf-compiler wget && \
@@ -29,6 +30,7 @@ FROM --platform=linux/amd64 gcr.io/distroless/static:nonroot
 WORKDIR /app
 COPY --from=builder /app/controller .
 COPY --from=builder /go/bin/grpc_health_probe /usr/local/bin/grpc-health-probe
+COPY --from=builder /app/.env .
 
 EXPOSE 50051
 USER nonroot:nonroot

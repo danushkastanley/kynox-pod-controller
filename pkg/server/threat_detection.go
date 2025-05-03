@@ -97,29 +97,42 @@ func (td *ThreatDetector) isSuspiciousCommand(cmd string) bool {
 	return false
 }
 
-// isSuspiciousFileAccess checks for sensitive file access
+// isSuspiciousFileAccess checks if a file access is suspicious based on
+// the path being accessed and any known sensitive files
 func (td *ThreatDetector) isSuspiciousFileAccess(path string) bool {
 	sensitiveFiles := []string{
 		"/etc/shadow",
 		"/etc/passwd",
-		"/etc/ssh",
-		"/root/",
-		"/.ssh/",
-		"/proc/sys/",
-		"/sys/kernel/",
-		"/proc/kcore",
-		"/boot/",
-		"/dev/mem",
-		"/etc/kubernetes",
+		"/etc/sudoers",
+		"/etc/ssh/sshd_config",
+		"/root/.ssh/authorized_keys",
+		"/etc/kubernetes/admin.conf",
+		"/etc/kubernetes/pki/",
 		"/var/run/docker.sock",
-		"/var/lib/kubelet",
 	}
 
-	for _, sensitive := range sensitiveFiles {
-		if strings.HasPrefix(path, sensitive) {
+	for _, file := range sensitiveFiles {
+		if strings.HasPrefix(path, file) {
 			return true
 		}
 	}
+
+	// Check for sensitive directories
+	sensitiveDirs := []string{
+		"/etc/ssl/private/",
+		"/etc/ssl/certs/",
+		"/etc/pki/",
+		"/etc/security/",
+		"/var/lib/kubelet/",
+		"/var/lib/docker/",
+	}
+
+	for _, dir := range sensitiveDirs {
+		if strings.HasPrefix(path, dir) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -238,6 +251,33 @@ func (td *ThreatDetector) detectAnomalousNetworkActivity(event *pb.SecurityEvent
 		tracker.connections[dst]++
 		// Alert if container connects to more than 20 unique IPs within 60 seconds
 		return len(tracker.connections) > 20
+	}
+
+	return false
+}
+
+// isSuspiciousChmod checks if a chmod operation is suspicious based on:
+// 1. The target file being sensitive
+// 2. The permissions being overly permissive (world-writable)
+func (td *ThreatDetector) isSuspiciousChmod(path string, mode uint32) bool {
+	// Check if target is a sensitive file
+	if td.isSuspiciousFileAccess(path) {
+		return true
+	}
+
+	// Check for world-writable permissions (0777, 0666, etc)
+	worldWritable := mode&0002 != 0
+	if worldWritable {
+		// Get just the permission bits, ignoring special bits
+		perms := mode & 0777
+		
+		// Check for especially dangerous combinations:
+		// - World writable and executable (777)
+		// - World writable on sensitive paths
+		if perms == 0777 || strings.HasPrefix(path, "/etc/") || 
+		   strings.HasPrefix(path, "/usr/") || strings.HasPrefix(path, "/bin/") {
+			return true
+		}
 	}
 
 	return false

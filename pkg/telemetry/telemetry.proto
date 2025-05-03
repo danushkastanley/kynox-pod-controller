@@ -65,6 +65,7 @@ enum EventType {
   LISTEN = 20;
   SEND = 21;
   RECV = 22;
+  CHMOD = 23;
 }
 
 // Security event message
@@ -88,6 +89,13 @@ message SecurityEvent {
   // int32 return_code = 14; // Example
   // Add fields for mount, capset etc. as needed later.
   map<string, string> container_context = 20; // Optional: e.g., pod_name, namespace
+  uint32 mode = 21; // For chmod events
+}
+
+// EventResponse is sent by the controller to acknowledge event receipt
+message EventResponse {
+  bool success = 1;
+  string message = 2;
 }
 
 // Response for sending events
@@ -105,5 +113,5 @@ service TelemetryService {
   rpc SendHeartbeat(Heartbeat) returns (ConnectionStatus);
   
   // Stream security events from agent to controller
-  rpc StreamEvents(stream SecurityEvent) returns (SendEventsResponse);
+  rpc StreamEvents(stream SecurityEvent) returns (stream EventResponse);
 }
