@@ -130,211 +130,222 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 }
 
 func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsServer) error {
-	// Get first event to identify the agent
-	event, err := stream.Recv()
-	if err != nil {
-		return status.Error(codes.Internal, "failed to receive initial event")
-	}
+    // Get first event to identify the agent
+    event, err := stream.Recv()
+    if err != nil {
+        return status.Error(codes.Internal, "failed to receive initial event")
+    }
 
-	// Verify agent is connected
-	s.mu.RLock()
-	agentID := event.GetContainerContext()["agent_id"]
-	agent, exists := s.agents[agentID]
-	s.mu.RUnlock()
+    // Verify agent is connected
+    s.mu.RLock()
+    agentID := event.GetContainerContext()["agent_id"]
+    agent, exists := s.agents[agentID]
+    s.mu.RUnlock()
 
-	if !exists {
-		return status.Error(codes.FailedPrecondition, "agent not connected")
-	}
+    if !exists {
+        return status.Error(codes.FailedPrecondition, "agent not connected")
+    }
 
-	logrus.Printf("🔄 Started event stream for agent %s (node: %s, pod: %s)", 
-		agent.AgentID, agent.NodeName, agent.PodName)
+    logrus.Printf("🔄 Started event stream for agent %s (node: %s, pod: %s)", 
+        agent.AgentID, agent.NodeName, agent.PodName)
 
-	// Process events
-	for {
-		logrus.WithFields(logrus.Fields{
-			"event_type": event.GetEventType(),
-			"command": event.GetCommand(),
-			"pid": event.GetPid(),
-			"agent": agent.AgentID,
-			"node": agent.NodeName,
-			"pod": agent.PodName,
-		}).Debug("📥 Received event from agent")
+    // Process the first event
+    if err := s.processEvent(event, agent); err != nil {
+        logrus.WithError(err).Error("Failed to process event")
+        return err
+    }
 
-		if err := s.processEvent(event, agent); err != nil {
-			logrus.WithError(err).Error("❌ Failed to process event")
-			return err
-		}
+    // Send acknowledgment for first event
+    if err := stream.Send(&pb.EventResponse{
+        Success: true,
+        Message: "Event processed successfully",
+    }); err != nil {
+        logrus.WithError(err).Error("Failed to send acknowledgment")
+        return err
+    }
 
-		event, err = stream.Recv()
-		if err != nil {
-			if err.Error() == "EOF" {
-				// Client closed the stream normally
-				return nil
-			}
-			return err
-		}
-	}
+    // Process subsequent events
+    for {
+        event, err := stream.Recv()
+        if err != nil {
+            return err
+        }
+
+        if err := s.processEvent(event, agent); err != nil {
+            logrus.WithError(err).Error("Failed to process event")
+            continue
+        }
+
+        // Send acknowledgment
+        if err := stream.Send(&pb.EventResponse{
+            Success: true,
+            Message: "Event processed successfully",
+        }); err != nil {
+            logrus.WithError(err).Error("Failed to send acknowledgment")
+            return err
+        }
+    }
 }
 
 func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *ConnectedAgent) error {
-	// Extract container context
-	containerContext := event.GetContainerContext()
-	containerId := containerContext["container_id"]
-	namespace := containerContext["namespace"]
-	podName := containerContext["pod_name"]
+    // Extract container context
+    containerContext := event.GetContainerContext()
+    containerId := containerContext["container_id"]
+    namespace := containerContext["namespace"]
+    podName := containerContext["pod_name"]
 
-	// Initialize fields for logging
-	fields := logrus.Fields{
-		"agent_id":     agent.AgentID,
-		"node":         agent.NodeName,
-		"pod":          agent.PodName,
-		"container_id": containerId,
-		"namespace":    namespace,
-		"event_type":   event.GetEventType().String(),
-	}
+    // Initialize fields for logging
+    fields := logrus.Fields{
+        "agent_id":     agent.AgentID,
+        "node":         agent.NodeName,
+        "pod":          agent.PodName,
+        "container_id": containerId,
+        "namespace":    namespace,
+        "event_type":   event.GetEventType().String(),
+    }
 
-	var severity string
-	var message string
-	var alertLevel alert.AlertLevel
+    var severity string
+    var message string
+    var alertLevel alert.AlertLevel
 
-	// Process different event types
-	switch event.GetEventType() {
-	case pb.EventType_MOUNT:
-		fields["file_path"] = event.GetFilePath()
-		if s.detector.isSuspiciousMount(event.GetFilePath()) {
-			severity = "CRITICAL"
-			message = fmt.Sprintf("Sensitive filesystem mount detected: %s", event.GetFilePath())
-			alertLevel = alert.AlertLevelCritical
-		}
+    // Process different event types
+    switch event.GetEventType() {
+    case pb.EventType_MOUNT:
+        fields["file_path"] = event.GetFilePath()
+        if s.detector.isSuspiciousMount(event.GetFilePath()) {
+            severity = "CRITICAL"
+            message = fmt.Sprintf("Sensitive filesystem mount detected: %s", event.GetFilePath())
+            alertLevel = alert.AlertLevelCritical
+        }
 
-	case pb.EventType_CHMOD:
-		fields["file_path"] = event.GetFilePath()
-		fields["mode"] = fmt.Sprintf("%o", event.GetMode())
-		
-		// Log the chmod event
-		logrus.WithFields(fields).Info("📝 Chmod operation detected")
-		
-		// Check for suspicious modes (e.g., 777)
-		if event.GetMode()&0777 == 0777 {
-			severity = "HIGH"
-			message = fmt.Sprintf("World-writable permission (777) set on %s", event.GetFilePath())
-			alertLevel = alert.AlertLevelHigh
-			logrus.WithFields(fields).Warn("⚠️ " + message)
-		}
+    case pb.EventType_CHMOD:
+        fields["file_path"] = event.GetFilePath()
+        fields["mode"] = fmt.Sprintf("%o", event.GetMode())
+        
+        // Log the chmod event
+        logrus.WithFields(fields).Info("📝 Chmod operation detected")
+        
+        // Check for suspicious modes (e.g., 777)
+        if event.GetMode()&0777 == 0777 {
+            severity = "HIGH"
+            message = fmt.Sprintf("World-writable permission (777) set on %s", event.GetFilePath())
+            alertLevel = alert.AlertLevelHigh
+            logrus.WithFields(fields).Warn("⚠️ " + message)
+        }
 
-	case pb.EventType_SETUID:
-		fields["uid"] = fmt.Sprintf("%d", event.GetUid())
-		if event.GetUid() == 0 {
-			severity = "CRITICAL"
-			message = "Root privilege escalation detected"
-			alertLevel = alert.AlertLevelCritical
-		} else {
-			severity = "HIGH"
-			message = "User privilege change detected"
-			alertLevel = alert.AlertLevelHigh
-		}
+    case pb.EventType_SETUID:
+        fields["uid"] = fmt.Sprintf("%d", event.GetUid())
+        if event.GetUid() == 0 {
+            severity = "CRITICAL"
+            message = "Root privilege escalation detected"
+            alertLevel = alert.AlertLevelCritical
+        } else {
+            severity = "HIGH"
+            message = "User privilege change detected"
+            alertLevel = alert.AlertLevelHigh
+        }
 
-	case pb.EventType_BPF_PROG:
-		fields["command"] = event.GetCommand()
-		fields["pid"] = fmt.Sprintf("%d", event.GetPid())
-		if event.GetUid() == 0 {
-			severity = "CRITICAL"
-			message = "Root BPF program loading detected"
-			alertLevel = alert.AlertLevelCritical
-		} else {
-			severity = "HIGH"
-			message = "BPF program loading detected"
-			alertLevel = alert.AlertLevelHigh
-		}
+    case pb.EventType_BPF_PROG:
+        fields["command"] = event.GetCommand()
+        fields["pid"] = fmt.Sprintf("%d", event.GetPid())
+        if event.GetUid() == 0 {
+            severity = "CRITICAL"
+            message = "Root BPF program loading detected"
+            alertLevel = alert.AlertLevelCritical
+        } else {
+            severity = "HIGH"
+            message = "BPF program loading detected"
+            alertLevel = alert.AlertLevelHigh
+        }
 
-	case pb.EventType_SECCOMP:
-		fields["command"] = event.GetCommand()
-		severity = "HIGH"
-		message = "Seccomp filter modification detected"
-		alertLevel = alert.AlertLevelHigh
+    case pb.EventType_SECCOMP:
+        fields["command"] = event.GetCommand()
+        severity = "HIGH"
+        message = "Seccomp filter modification detected"
+        alertLevel = alert.AlertLevelHigh
 
-	case pb.EventType_CONNECT, pb.EventType_BIND, pb.EventType_ACCEPT:
-		fields["src_ip"] = event.GetSourceIp()
-		fields["src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
-		fields["dst_ip"] = event.GetDestinationIp()
-		fields["dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
+    case pb.EventType_CONNECT, pb.EventType_BIND, pb.EventType_ACCEPT:
+        fields["src_ip"] = event.GetSourceIp()
+        fields["src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
+        fields["dst_ip"] = event.GetDestinationIp()
+        fields["dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
 
-		if s.detector.isSuspiciousCommand(event.GetCommand()) {
-			if event.GetUid() == 0 {
-				severity = "CRITICAL"
-				message = fmt.Sprintf("Root user initiated suspicious network connection: %s -> %s:%d",
-					event.GetCommand(), event.GetDestinationIp(), event.GetDestinationPort())
-				alertLevel = alert.AlertLevelCritical
-			} else {
-				severity = "HIGH"
-				message = fmt.Sprintf("User initiated suspicious network connection: %s -> %s:%d",
-					event.GetCommand(), event.GetDestinationIp(), event.GetDestinationPort())
-				alertLevel = alert.AlertLevelHigh
-			}
-		}
+        if s.detector.isSuspiciousCommand(event.GetCommand()) {
+            if event.GetUid() == 0 {
+                severity = "CRITICAL"
+                message = fmt.Sprintf("Root user initiated suspicious network connection: %s -> %s:%d",
+                    event.GetCommand(), event.GetDestinationIp(), event.GetDestinationPort())
+                alertLevel = alert.AlertLevelCritical
+            } else {
+                severity = "HIGH"
+                message = fmt.Sprintf("User initiated suspicious network connection: %s -> %s:%d",
+                    event.GetCommand(), event.GetDestinationIp(), event.GetDestinationPort())
+                alertLevel = alert.AlertLevelHigh
+            }
+        }
 
-	case pb.EventType_OPEN:
-		fields["file_path"] = event.GetFilePath()
-	}
+    case pb.EventType_OPEN:
+        fields["file_path"] = event.GetFilePath()
+    }
 
-	// Log and alert if severity was set
-	if severity != "" {
-		// Create and dispatch alert for HIGH and CRITICAL events
-		alertContext := map[string]string{
-			"agent_id":     agent.AgentID,
-			"node_name":    agent.NodeName,
-			"pod_name":     agent.PodName,
-			"container_id": containerId,
-			"namespace":    namespace,
-			"event_type":   event.GetEventType().String(),
-			"command":      event.GetCommand(),
-		}
+    // Log and alert if severity was set
+    if severity != "" {
+        // Create and dispatch alert for HIGH and CRITICAL events
+        alertContext := map[string]string{
+            "agent_id":     agent.AgentID,
+            "node_name":    agent.NodeName,
+            "pod_name":     agent.PodName,
+            "container_id": containerId,
+            "namespace":    namespace,
+            "event_type":   event.GetEventType().String(),
+            "command":      event.GetCommand(),
+        }
 
-		// Add process info
-		alertContext["proc_pid"] = fmt.Sprintf("%d", event.GetPid())
-		alertContext["proc_ppid"] = fmt.Sprintf("%d", event.GetPpid())
-		alertContext["proc_uid"] = fmt.Sprintf("%d", event.GetUid())
-		alertContext["proc_gid"] = fmt.Sprintf("%d", event.GetGid())
+        // Add process info
+        alertContext["proc_pid"] = fmt.Sprintf("%d", event.GetPid())
+        alertContext["proc_ppid"] = fmt.Sprintf("%d", event.GetPpid())
+        alertContext["proc_uid"] = fmt.Sprintf("%d", event.GetUid())
+        alertContext["proc_gid"] = fmt.Sprintf("%d", event.GetGid())
 
-		// Add network info if present
-		if event.GetSourceIp() != "" {
-			alertContext["net_src_ip"] = event.GetSourceIp()
-			alertContext["net_src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
-		}
-		if event.GetDestinationIp() != "" {
-			alertContext["net_dst_ip"] = event.GetDestinationIp()
-			alertContext["net_dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
-		}
+        // Add network info if present
+        if event.GetSourceIp() != "" {
+            alertContext["net_src_ip"] = event.GetSourceIp()
+            alertContext["net_src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
+        }
+        if event.GetDestinationIp() != "" {
+            alertContext["net_dst_ip"] = event.GetDestinationIp()
+            alertContext["net_dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
+        }
 
-		// Add file info if present
-		if event.GetFilePath() != "" {
-			alertContext["file_path"] = event.GetFilePath()
-		}
+        // Add file info if present
+        if event.GetFilePath() != "" {
+            alertContext["file_path"] = event.GetFilePath()
+        }
 
-		// Add security info if present
-		if event.GetPtraceRequest() != 0 {
-			alertContext["sec_ptrace_req"] = fmt.Sprintf("%d", event.GetPtraceRequest())
-			alertContext["sec_ptrace_target"] = fmt.Sprintf("%d", event.GetPtraceTargetPid())
-		}
+        // Add security info if present
+        if event.GetPtraceRequest() != 0 {
+            alertContext["sec_ptrace_req"] = fmt.Sprintf("%d", event.GetPtraceRequest())
+            alertContext["sec_ptrace_target"] = fmt.Sprintf("%d", event.GetPtraceTargetPid())
+        }
 
-		alert := alert.CreateAlert(
-			alertLevel,
-			fmt.Sprintf("%s: %s", severity, message),
-			fmt.Sprintf("Security event detected in pod %s/%s on node %s", namespace, podName, agent.NodeName),
-			alertContext,
-		)
+        alert := alert.CreateAlert(
+            alertLevel,
+            fmt.Sprintf("%s: %s", severity, message),
+            fmt.Sprintf("Security event detected in pod %s/%s on node %s", namespace, podName, agent.NodeName),
+            alertContext,
+        )
 
-		logrus.WithFields(fields).WithField("alert_level", alertLevel).Info("🚨 Dispatching alert")
-		if err := s.alerter.Dispatch(alert); err != nil {
-			logrus.WithError(err).Error("❌ Failed to dispatch alert")
-		} else {
-			logrus.WithFields(fields).Info("✅ Alert dispatched successfully")
-		}
-	} else {
-		logrus.WithFields(fields).Debug("✓ Security event processed (no alert needed)")
-	}
+        logrus.WithFields(fields).WithField("alert_level", alertLevel).Info("🚨 Dispatching alert")
+        if err := s.alerter.Dispatch(alert); err != nil {
+            logrus.WithError(err).Error("❌ Failed to dispatch alert")
+        } else {
+            logrus.WithFields(fields).Info("✅ Alert dispatched successfully")
+        }
+    } else {
+        logrus.WithFields(fields).Debug("✓ Security event processed (no alert needed)")
+    }
 
-	return nil
+    return nil
 }
 
 func (s *TelemetryServer) CleanupInactiveAgents() {

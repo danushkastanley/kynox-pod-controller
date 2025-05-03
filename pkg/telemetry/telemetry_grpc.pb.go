@@ -67,7 +67,7 @@ func (c *telemetryServiceClient) StreamEvents(ctx context.Context, opts ...grpc.
 
 type TelemetryService_StreamEventsClient interface {
 	Send(*SecurityEvent) error
-	CloseAndRecv() (*SendEventsResponse, error)
+	Recv() (*EventResponse, error)
 	grpc.ClientStream
 }
 
@@ -79,11 +79,8 @@ func (x *telemetryServiceStreamEventsClient) Send(m *SecurityEvent) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *telemetryServiceStreamEventsClient) CloseAndRecv() (*SendEventsResponse, error) {
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	m := new(SendEventsResponse)
+func (x *telemetryServiceStreamEventsClient) Recv() (*EventResponse, error) {
+	m := new(EventResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -170,7 +167,7 @@ func _TelemetryService_StreamEvents_Handler(srv interface{}, stream grpc.ServerS
 }
 
 type TelemetryService_StreamEventsServer interface {
-	SendAndClose(*SendEventsResponse) error
+	Send(*EventResponse) error
 	Recv() (*SecurityEvent, error)
 	grpc.ServerStream
 }
@@ -179,7 +176,7 @@ type telemetryServiceStreamEventsServer struct {
 	grpc.ServerStream
 }
 
-func (x *telemetryServiceStreamEventsServer) SendAndClose(m *SendEventsResponse) error {
+func (x *telemetryServiceStreamEventsServer) Send(m *EventResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -211,6 +208,7 @@ var TelemetryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamEvents",
 			Handler:       _TelemetryService_StreamEvents_Handler,
+			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},

@@ -92,6 +92,12 @@ message SecurityEvent {
   uint32 mode = 21; // For chmod events
 }
 
+// EventResponse is sent by the controller to acknowledge event receipt
+message EventResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 // Response for sending events
 message SendEventsResponse {
   bool success = 1;
@@ -107,5 +113,5 @@ service TelemetryService {
   rpc SendHeartbeat(Heartbeat) returns (ConnectionStatus);
   
   // Stream security events from agent to controller
-  rpc StreamEvents(stream SecurityEvent) returns (SendEventsResponse);
+  rpc StreamEvents(stream SecurityEvent) returns (stream EventResponse);
 }
