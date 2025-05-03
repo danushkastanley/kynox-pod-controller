@@ -300,101 +300,120 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		"agent_id":     agent.AgentID,
 		"node":         agent.NodeName,
 		"pod":          agent.PodName,
-		"container_id": containerId,
-		"namespace":    namespace,
-		"event_type":   event.GetEventType().String(),
+		"event_type":   pb.EventType_name[int32(event.EventType)],
+		"command":      event.Command,
+		"pid":          event.Pid,
+		"ppid":         event.Ppid,
 	}
 
-	// Classify the event
-	severity, message := s.classifier.ClassifyEvent(event)
+	// Add optional fields if present
+	if event.FilePath != "" {
+		fields["file_path"] = event.FilePath
+	}
+	if event.DestinationIp != "" {
+		fields["dst_ip"] = event.DestinationIp
+		fields["dst_port"] = event.DestinationPort
+	}
+	if event.SourceIp != "" {
+		fields["src_ip"] = event.SourceIp
+		fields["src_port"] = event.SourcePort
+	}
 
-	// Update metrics
-	s.updateMetrics(event.GetEventType().String(), severity)
+	// Classify event severity
+	severity, msg := s.classifier.ClassifyEvent(event)
+	fields["severity"] = severity
+	fields["message"] = msg
 
-	// Log all events at appropriate level
+	// Log the event with appropriate level based on severity
 	switch severity {
 	case classifier.SeverityCritical:
-		logrus.WithFields(fields).Error(message)
+		logrus.WithFields(fields).Error("🚨 Critical security event detected")
 	case classifier.SeverityHigh:
-		logrus.WithFields(fields).Warn(message)
+		logrus.WithFields(fields).Error("⚠️  High severity security event detected")
 	case classifier.SeverityWarn:
-		logrus.WithFields(fields).Info(message)
+		logrus.WithFields(fields).Warn("⚠️  Medium severity security event detected")
+	case classifier.SeverityLow:
+		logrus.WithFields(fields).Info("ℹ️  Low severity security event detected")
 	default:
-		logrus.WithFields(fields).Debug(message)
+		logrus.WithFields(fields).Debug("🔍 Security event detected")
 	}
 
-	// Only process HIGH and CRITICAL events
-	if severity == classifier.SeverityHigh || severity == classifier.SeverityCritical {
-		// Check rate limit before sending alert
-		if !s.alertLimiter.Allow() {
-			logrus.WithFields(fields).Warn("Alert rate limited, skipping notification")
-			return nil
-		}
+	// Update metrics
+	s.updateMetrics(pb.EventType_name[int32(event.EventType)], severity)
 
-		// Create alert key for aggregation
-		alertKey := AlertKey{
-			EventType:   event.GetEventType().String(),
-			Command:     event.GetCommand(),
-			Namespace:   namespace,
-			PodName:    podName,
-			ContainerID: containerId,
-			Severity:    string(severity),
-		}
+	// Create alert key for aggregation
+	alertKey := AlertKey{
+		EventType:   pb.EventType_name[int32(event.EventType)],
+		Command:     event.Command,
+		Namespace:   namespace,
+		PodName:     podName,
+		ContainerID: containerId,
+		Severity:    string(severity),
+	}
 
-		// Check if we should send alert based on aggregation
-		shouldAlert := s.aggregateAlert(alertKey, message)
-		if !shouldAlert {
-			return nil
-		}
+	// Create alert message
+	alertMsg := fmt.Sprintf("%s event detected in pod %s/%s: %s (%s)", 
+		pb.EventType_name[int32(event.EventType)],
+		namespace,
+		podName,
+		event.Command,
+		msg)
 
-		// Get aggregation info
-		s.aggregationMu.RLock()
-		agg := s.alertAggregation[alertKey]
-		s.aggregationMu.RUnlock()
-
-		// Create alert context with aggregation info
-		alertContext := map[string]string{
-			"agent_id":     agent.AgentID,
-			"node_name":    agent.NodeName,
-			"pod_name":     agent.PodName,
-			"container_id": containerId,
-			"namespace":    namespace,
-			"event_type":   event.GetEventType().String(),
-			"command":      event.GetCommand(),
-			"severity":     string(severity),
-			"count":        fmt.Sprintf("%d", agg.Count),
-			"first_seen":   agg.FirstSeen.Format(time.RFC3339),
-			"duration":     time.Since(agg.FirstSeen).String(),
-		}
-
-		// Create and dispatch alert
-		alertLevel := alert.AlertLevel(s.getAlertLevel(severity))
-		alert := alert.CreateAlert(
-			alertLevel,
-			fmt.Sprintf("%s: %s", severity, message),
-			fmt.Sprintf("Security event detected in pod %s/%s on node %s", namespace, podName, agent.NodeName),
-			alertContext,
-		)
-
-		if err := s.alerter.Dispatch(alert); err != nil {
-			logrus.WithError(err).Error("Failed to send alert")
-			return err
+	// Check if we should send alert based on aggregation
+	if s.aggregateAlert(alertKey, alertMsg) {
+		// Send alert if rate limit allows
+		if s.alertLimiter.Allow() {
+			if err := s.alerter.Dispatch(&alert.Alert{
+				Level:     s.getAlertLevel(severity),
+				Title:    fmt.Sprintf("%s Security Event", severity),
+				Message:  alertMsg,
+				AgentID:  agent.AgentID,
+				NodeName: agent.NodeName,
+				PodName:  podName,
+				Namespace: namespace,
+				EventType: pb.EventType_name[int32(event.EventType)],
+				Command:   event.Command,
+				ProcessInfo: map[string]string{
+					"pid":  fmt.Sprintf("%d", event.Pid),
+					"ppid": fmt.Sprintf("%d", event.Ppid),
+					"uid":  fmt.Sprintf("%d", event.Uid),
+					"gid":  fmt.Sprintf("%d", event.Gid),
+				},
+				NetworkInfo: map[string]string{
+					"src_ip":   event.SourceIp,
+					"src_port": fmt.Sprintf("%d", event.SourcePort),
+					"dst_ip":   event.DestinationIp,
+					"dst_port": fmt.Sprintf("%d", event.DestinationPort),
+				},
+				FileInfo: map[string]string{
+					"path": event.FilePath,
+				},
+				SecurityInfo: map[string]string{
+					"severity": string(severity),
+					"message":  msg,
+				},
+				Timestamp: time.Now(),
+			}); err != nil {
+				logrus.WithError(err).Error("Failed to send alert")
+			}
 		}
 	}
 
 	return nil
 }
 
-func (s *TelemetryServer) getAlertLevel(severity classifier.Severity) string {
+func (s *TelemetryServer) getAlertLevel(severity classifier.Severity) alert.AlertLevel {
 	switch severity {
 	case classifier.SeverityCritical:
-		return "CRITICAL"
+		return alert.AlertLevelCritical
 	case classifier.SeverityHigh:
-		return "HIGH"
+		return alert.AlertLevelHigh
 	case classifier.SeverityWarn:
-		return "WARN"
+		return alert.AlertLevelWarning
+	case classifier.SeverityLow:
+		return alert.AlertLevelInfo
 	default:
-		return "INFO"
+		return alert.AlertLevelInfo
 	}
 }
 

@@ -152,6 +152,12 @@ func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, stri
 		return SeverityLow, "Network connection"
 
 	case pb.EventType_CHMOD:
+		if c.isSensitivePath(event.GetFilePath()) {
+			if isRoot && !c.isTrustedProcess(command) {
+				return SeverityCritical, "Critical: Permission modification on sensitive file"
+			}
+			return SeverityHigh, "Permission modification on sensitive file"
+		}
 		if event.GetMode()&0777 == 0777 {
 			if !c.isTrustedProcess(command) {
 				return SeverityHigh, "World-writable permission (777) detected"
