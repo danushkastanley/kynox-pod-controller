@@ -154,6 +154,10 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 
 		event, err = stream.Recv()
 		if err != nil {
+			if err.Error() == "EOF" {
+				// Client closed the stream normally
+				return nil
+			}
 			return err
 		}
 	}
@@ -214,18 +218,18 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	// Check for high-risk events first
 	if s.detector.isPrivilegedOperation(event) {
-		severity = "WARNING"
+		severity = "CRITICAL"
 		message = "Privileged operation detected"
-		alertLevel = alert.AlertLevelWarning
+		alertLevel = alert.AlertLevelCritical
 	}
 
 	// Event-specific checks
 	switch event.EventType {
 	case pb.EventType_EXEC:
 		if s.detector.isSuspiciousCommand(event.Command) {
-			severity = "WARNING"
+			severity = "HIGH"
 			message = "Suspicious command execution detected"
-			alertLevel = alert.AlertLevelWarning
+			alertLevel = alert.AlertLevelHigh
 
 			logrus.WithFields(logrus.Fields{
 				"command": event.Command,
@@ -245,7 +249,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 					event.ContainerContext["pod_name"],
 					event.ContainerContext["node_name"],
 					event.ContainerContext["container_name"]),
-				Level:     alert.AlertLevelWarning,
+				Level:     alert.AlertLevelHigh,
 				EventType: event.EventType.String(),
 			}
 
@@ -254,28 +258,28 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			}
 		}
 		if s.detector.detectAnomalousProcessSpawning(event, containerId) {
-			severity = "WARNING"
+			severity = "HIGH"
 			message = "Anomalous process spawning detected"
-			alertLevel = alert.AlertLevelWarning
+			alertLevel = alert.AlertLevelHigh
 		}
 
 	case pb.EventType_OPEN:
 		if s.detector.isSuspiciousFileAccess(event.FilePath) {
-			severity = "WARNING"
+			severity = "HIGH"
 			message = "Sensitive file access detected"
-			alertLevel = alert.AlertLevelWarning
+			alertLevel = alert.AlertLevelHigh
 		}
 
 	case pb.EventType_CONNECT:
 		if s.detector.isExternalConnection(event.DestinationIp) {
-			severity = "WARNING"
+			severity = "HIGH"
 			message = "External network connection detected"
-			alertLevel = alert.AlertLevelWarning
+			alertLevel = alert.AlertLevelHigh
 		}
 		if s.detector.detectAnomalousNetworkActivity(event, containerId) {
-			severity = "WARNING"
+			severity = "HIGH"
 			message = "Anomalous network activity detected"
-			alertLevel = alert.AlertLevelWarning
+			alertLevel = alert.AlertLevelHigh
 		}
 
 	case pb.EventType_PTRACE:
@@ -305,9 +309,9 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		alertLevel = alert.AlertLevelCritical
 
 	case pb.EventType_SECCOMP:
-		severity = "WARNING"
+		severity = "HIGH"
 		message = "Seccomp filter modification detected"
-		alertLevel = alert.AlertLevelWarning
+		alertLevel = alert.AlertLevelHigh
 	}
 
 	// Log with appropriate severity
@@ -317,13 +321,13 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		switch severity {
 		case "CRITICAL":
 			entry.Error(message)
-		case "WARNING":
+		case "HIGH":
 			entry.Warn(message)
 		default:
 			entry.Info(message)
 		}
 
-		// Create and dispatch alert for WARNING and CRITICAL events
+		// Create and dispatch alert for HIGH and CRITICAL events
 		if alertLevel != "" {
 			alertContext := map[string]string{
 				"agent_id":     agent.AgentID,

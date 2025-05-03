@@ -8,9 +8,10 @@ import (
 type AlertLevel string
 
 const (
-	AlertLevelCritical AlertLevel = "CRITICAL"
-	AlertLevelWarning  AlertLevel = "WARNING"
 	AlertLevelInfo     AlertLevel = "INFO"
+	AlertLevelWarning  AlertLevel = "WARNING"
+	AlertLevelHigh     AlertLevel = "HIGH"
+	AlertLevelCritical AlertLevel = "CRITICAL"
 )
 
 // Alert represents a security alert
