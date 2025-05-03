@@ -23,7 +23,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TelemetryServiceClient interface {
 	// Establish connection with controller
-	Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error)
+	ConnectAgent(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error)
 	// Maintain connection with heartbeat
 	SendHeartbeat(ctx context.Context, in *Heartbeat, opts ...grpc.CallOption) (*ConnectionStatus, error)
 	// Stream security events from agent to controller
@@ -38,9 +38,9 @@ func NewTelemetryServiceClient(cc grpc.ClientConnInterface) TelemetryServiceClie
 	return &telemetryServiceClient{cc}
 }
 
-func (c *telemetryServiceClient) Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error) {
+func (c *telemetryServiceClient) ConnectAgent(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error) {
 	out := new(ConnectResponse)
-	err := c.cc.Invoke(ctx, "/telemetry.TelemetryService/Connect", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/telemetry.TelemetryService/ConnectAgent", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (c *telemetryServiceClient) StreamEvents(ctx context.Context, opts ...grpc.
 
 type TelemetryService_StreamEventsClient interface {
 	Send(*SecurityEvent) error
-	CloseAndRecv() (*SendEventsResponse, error)
+	Recv() (*EventResponse, error)
 	grpc.ClientStream
 }
 
@@ -79,11 +79,8 @@ func (x *telemetryServiceStreamEventsClient) Send(m *SecurityEvent) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *telemetryServiceStreamEventsClient) CloseAndRecv() (*SendEventsResponse, error) {
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	m := new(SendEventsResponse)
+func (x *telemetryServiceStreamEventsClient) Recv() (*EventResponse, error) {
+	m := new(EventResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -95,7 +92,7 @@ func (x *telemetryServiceStreamEventsClient) CloseAndRecv() (*SendEventsResponse
 // for forward compatibility
 type TelemetryServiceServer interface {
 	// Establish connection with controller
-	Connect(context.Context, *ConnectRequest) (*ConnectResponse, error)
+	ConnectAgent(context.Context, *ConnectRequest) (*ConnectResponse, error)
 	// Maintain connection with heartbeat
 	SendHeartbeat(context.Context, *Heartbeat) (*ConnectionStatus, error)
 	// Stream security events from agent to controller
@@ -107,8 +104,8 @@ type TelemetryServiceServer interface {
 type UnimplementedTelemetryServiceServer struct {
 }
 
-func (UnimplementedTelemetryServiceServer) Connect(context.Context, *ConnectRequest) (*ConnectResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Connect not implemented")
+func (UnimplementedTelemetryServiceServer) ConnectAgent(context.Context, *ConnectRequest) (*ConnectResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ConnectAgent not implemented")
 }
 func (UnimplementedTelemetryServiceServer) SendHeartbeat(context.Context, *Heartbeat) (*ConnectionStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
@@ -129,20 +126,20 @@ func RegisterTelemetryServiceServer(s grpc.ServiceRegistrar, srv TelemetryServic
 	s.RegisterService(&TelemetryService_ServiceDesc, srv)
 }
 
-func _TelemetryService_Connect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _TelemetryService_ConnectAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ConnectRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TelemetryServiceServer).Connect(ctx, in)
+		return srv.(TelemetryServiceServer).ConnectAgent(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/telemetry.TelemetryService/Connect",
+		FullMethod: "/telemetry.TelemetryService/ConnectAgent",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TelemetryServiceServer).Connect(ctx, req.(*ConnectRequest))
+		return srv.(TelemetryServiceServer).ConnectAgent(ctx, req.(*ConnectRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -170,7 +167,7 @@ func _TelemetryService_StreamEvents_Handler(srv interface{}, stream grpc.ServerS
 }
 
 type TelemetryService_StreamEventsServer interface {
-	SendAndClose(*SendEventsResponse) error
+	Send(*EventResponse) error
 	Recv() (*SecurityEvent, error)
 	grpc.ServerStream
 }
@@ -179,7 +176,7 @@ type telemetryServiceStreamEventsServer struct {
 	grpc.ServerStream
 }
 
-func (x *telemetryServiceStreamEventsServer) SendAndClose(m *SendEventsResponse) error {
+func (x *telemetryServiceStreamEventsServer) Send(m *EventResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -199,8 +196,8 @@ var TelemetryService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*TelemetryServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Connect",
-			Handler:    _TelemetryService_Connect_Handler,
+			MethodName: "ConnectAgent",
+			Handler:    _TelemetryService_ConnectAgent_Handler,
 		},
 		{
 			MethodName: "SendHeartbeat",
@@ -211,6 +208,7 @@ var TelemetryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamEvents",
 			Handler:       _TelemetryService_StreamEvents_Handler,
+			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},
