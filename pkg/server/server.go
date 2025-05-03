@@ -211,16 +211,17 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	case pb.EventType_CHMOD:
 		fields["file_path"] = event.GetFilePath()
 		fields["mode"] = fmt.Sprintf("%o", event.GetMode())
-		
+		fields["uid"] = fmt.Sprintf("%d", event.GetUid())
+
 		if s.detector.isSuspiciousChmod(event.GetFilePath(), event.GetMode()) {
 			if event.GetUid() == 0 {
 				severity = "CRITICAL"
-				message = fmt.Sprintf("Root user modified permissions of sensitive file: chmod %o %s",
+				message = fmt.Sprintf("Root user setting suspicious permissions %o on %s",
 					event.GetMode(), event.GetFilePath())
 				alertLevel = alert.AlertLevelCritical
 			} else {
 				severity = "HIGH"
-				message = fmt.Sprintf("User attempted to modify permissions of sensitive file: chmod %o %s",
+				message = fmt.Sprintf("User setting suspicious permissions %o on %s",
 					event.GetMode(), event.GetFilePath())
 				alertLevel = alert.AlertLevelHigh
 			}
