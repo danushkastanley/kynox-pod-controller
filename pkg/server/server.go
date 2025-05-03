@@ -25,29 +25,55 @@ type ConnectedAgent struct {
 	Metadata  map[string]string
 }
 
+type AlertKey struct {
+	EventType    string
+	Command      string
+	Namespace    string
+	PodName      string
+	ContainerID  string
+	Severity     string
+}
+
+type AlertAggregation struct {
+	Count     int
+	FirstSeen time.Time
+	LastSeen  time.Time
+	Message   string
+}
+
 type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
-	mu         sync.RWMutex
-	agents     map[string]*ConnectedAgent
-	timeout    time.Duration
-	classifier *classifier.EventClassifier
-	alerter    *alert.AlertDispatcher
-	alertLimiter *rate.Limiter
+	agents        map[string]*ConnectedAgent
+	mu           sync.RWMutex
+	classifier    *classifier.EventClassifier
+	alertLimiter  *rate.Limiter
+	alerter       *alert.AlertDispatcher
+	// Metrics
+	eventCounts   map[string]int64
+	severityCounts map[string]int64
+	// Alert aggregation
+	alertAggregation map[AlertKey]*AlertAggregation
+	aggregationMu   sync.RWMutex
+	metricsMu      sync.RWMutex
+	timeout        time.Duration
 }
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	// Initialize alert dispatcher
 	alertDispatcher, err := alert.NewAlertDispatcher()
 	if err != nil {
-		logrus.Fatalf("Failed to initialize alert dispatcher: %v", err)
+		logrus.WithError(err).Fatal("Failed to create alert dispatcher")
 	}
 
 	return &TelemetryServer{
-		agents:     make(map[string]*ConnectedAgent),
-		timeout:    timeout,
-		classifier: classifier.NewEventClassifier(),
-		alerter:    alertDispatcher,
-		alertLimiter: rate.NewLimiter(rate.Every(1*time.Second), 1), // 1 alert per second
+		agents:          make(map[string]*ConnectedAgent),
+		classifier:      classifier.NewEventClassifier(),
+		alertLimiter:    rate.NewLimiter(rate.Every(1*time.Second), 1),
+		alerter:         alertDispatcher,
+		eventCounts:     make(map[string]int64),
+		severityCounts:  make(map[string]int64),
+		alertAggregation: make(map[AlertKey]*AlertAggregation),
+		timeout:         timeout,
 	}
 }
 
@@ -191,6 +217,63 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 	}
 }
 
+func (s *TelemetryServer) updateMetrics(eventType string, severity classifier.Severity) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	
+	s.eventCounts[eventType]++
+	s.severityCounts[string(severity)]++
+}
+
+func (s *TelemetryServer) GetMetrics() map[string]interface{} {
+	s.metricsMu.RLock()
+	defer s.metricsMu.RUnlock()
+	
+	return map[string]interface{}{
+		"event_counts":    s.eventCounts,
+		"severity_counts": s.severityCounts,
+	}
+}
+
+func (s *TelemetryServer) aggregateAlert(key AlertKey, message string) bool {
+	now := time.Now()
+	s.aggregationMu.Lock()
+	defer s.aggregationMu.Unlock()
+
+	// Check if we have an existing aggregation
+	if agg, exists := s.alertAggregation[key]; exists {
+		// If last alert was more than 5 minutes ago, create new aggregation
+		if now.Sub(agg.LastSeen) > 5*time.Minute {
+			s.alertAggregation[key] = &AlertAggregation{
+				Count:     1,
+				FirstSeen: now,
+				LastSeen:  now,
+				Message:   message,
+			}
+			return true
+		}
+
+		// Update existing aggregation
+		agg.Count++
+		agg.LastSeen = now
+		
+		// Send aggregated alert every 10 events or every minute
+		if agg.Count%10 == 0 || now.Sub(agg.LastSeen) >= time.Minute {
+			return true
+		}
+		return false
+	}
+
+	// Create new aggregation
+	s.alertAggregation[key] = &AlertAggregation{
+		Count:     1,
+		FirstSeen: now,
+		LastSeen:  now,
+		Message:   message,
+	}
+	return true
+}
+
 func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *ConnectedAgent) error {
 	// Extract container context
 	containerContext := event.GetContainerContext()
@@ -210,6 +293,9 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	// Classify the event
 	severity, message := s.classifier.ClassifyEvent(event)
+
+	// Update metrics
+	s.updateMetrics(event.GetEventType().String(), severity)
 
 	// Log all events at appropriate level
 	switch severity {
@@ -231,7 +317,28 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			return nil
 		}
 
-		// Create alert context
+		// Create alert key for aggregation
+		alertKey := AlertKey{
+			EventType:   event.GetEventType().String(),
+			Command:     event.GetCommand(),
+			Namespace:   namespace,
+			PodName:    podName,
+			ContainerID: containerId,
+			Severity:    string(severity),
+		}
+
+		// Check if we should send alert based on aggregation
+		shouldAlert := s.aggregateAlert(alertKey, message)
+		if !shouldAlert {
+			return nil
+		}
+
+		// Get aggregation info
+		s.aggregationMu.RLock()
+		agg := s.alertAggregation[alertKey]
+		s.aggregationMu.RUnlock()
+
+		// Create alert context with aggregation info
 		alertContext := map[string]string{
 			"agent_id":     agent.AgentID,
 			"node_name":    agent.NodeName,
@@ -241,41 +348,13 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			"event_type":   event.GetEventType().String(),
 			"command":      event.GetCommand(),
 			"severity":     string(severity),
-		}
-
-		// Add process info
-		alertContext["proc_pid"] = fmt.Sprintf("%d", event.GetPid())
-		alertContext["proc_ppid"] = fmt.Sprintf("%d", event.GetPpid())
-		alertContext["proc_uid"] = fmt.Sprintf("%d", event.GetUid())
-		alertContext["proc_gid"] = fmt.Sprintf("%d", event.GetGid())
-
-		// Add network info if present
-		if event.GetSourceIp() != "" {
-			alertContext["net_src_ip"] = event.GetSourceIp()
-			alertContext["net_src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
-		}
-		if event.GetDestinationIp() != "" {
-			alertContext["net_dst_ip"] = event.GetDestinationIp()
-			alertContext["net_dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
-		}
-
-		// Add file info if present
-		if event.GetFilePath() != "" {
-			alertContext["file_path"] = event.GetFilePath()
-		}
-
-		// Add security info if present
-		if event.GetPtraceRequest() != 0 {
-			alertContext["sec_ptrace_req"] = fmt.Sprintf("%d", event.GetPtraceRequest())
-			alertContext["sec_ptrace_target"] = fmt.Sprintf("%d", event.GetPtraceTargetPid())
+			"count":        fmt.Sprintf("%d", agg.Count),
+			"first_seen":   agg.FirstSeen.Format(time.RFC3339),
+			"duration":     time.Since(agg.FirstSeen).String(),
 		}
 
 		// Create and dispatch alert
-		alertLevel := alert.AlertLevelHigh
-		if severity == classifier.SeverityCritical {
-			alertLevel = alert.AlertLevelCritical
-		}
-
+		alertLevel := alert.AlertLevel(s.getAlertLevel(severity))
 		alert := alert.CreateAlert(
 			alertLevel,
 			fmt.Sprintf("%s: %s", severity, message),
@@ -283,18 +362,26 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			alertContext,
 		)
 
-		logrus.WithFields(fields).WithField("alert_level", alertLevel).Info("🚨 Dispatching alert")
 		if err := s.alerter.Dispatch(alert); err != nil {
-			logrus.WithError(err).Error("❌ Failed to dispatch alert")
-		} else {
-			logrus.WithFields(fields).Info("✅ Alert dispatched successfully")
+			logrus.WithError(err).Error("Failed to send alert")
+			return err
 		}
-	} else {
-		// Log low severity events at debug level
-		logrus.WithFields(fields).Debug("✓ Low severity event processed (no alert needed)")
 	}
 
 	return nil
+}
+
+func (s *TelemetryServer) getAlertLevel(severity classifier.Severity) string {
+	switch severity {
+	case classifier.SeverityCritical:
+		return "CRITICAL"
+	case classifier.SeverityHigh:
+		return "HIGH"
+	case classifier.SeverityWarn:
+		return "WARN"
+	default:
+		return "INFO"
+	}
 }
 
 func (s *TelemetryServer) CleanupInactiveAgents() {
