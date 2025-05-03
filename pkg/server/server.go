@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -198,15 +199,28 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 	for {
 		event, err := stream.Recv()
 		if err != nil {
+			if err == io.EOF {
+				logrus.Printf("📡 Event stream closed for agent %s", agent.AgentID)
+				return nil
+			}
 			return err
 		}
 
+		// Process the event
 		if err := s.processEvent(event, agent); err != nil {
 			logrus.WithError(err).Error("Failed to process event")
+			// Send error response to agent
+			if sendErr := stream.Send(&pb.EventResponse{
+				Success: false,
+				Message: fmt.Sprintf("Failed to process event: %v", err),
+			}); sendErr != nil {
+				logrus.WithError(sendErr).Error("Failed to send error response")
+				return sendErr
+			}
 			continue
 		}
 
-		// Send acknowledgment
+		// Send success acknowledgment
 		if err := stream.Send(&pb.EventResponse{
 			Success: true,
 			Message: "Event processed successfully",
