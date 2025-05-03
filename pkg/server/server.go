@@ -146,9 +146,22 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 		return status.Error(codes.FailedPrecondition, "agent not connected")
 	}
 
+	logrus.Printf("🔄 Started event stream for agent %s (node: %s, pod: %s)", 
+		agent.AgentID, agent.NodeName, agent.PodName)
+
 	// Process events
 	for {
+		logrus.WithFields(logrus.Fields{
+			"event_type": event.GetEventType(),
+			"command": event.GetCommand(),
+			"pid": event.GetPid(),
+			"agent": agent.AgentID,
+			"node": agent.NodeName,
+			"pod": agent.PodName,
+		}).Debug("📥 Received event from agent")
+
 		if err := s.processEvent(event, agent); err != nil {
+			logrus.WithError(err).Error("❌ Failed to process event")
 			return err
 		}
 
@@ -164,41 +177,27 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 }
 
 func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *ConnectedAgent) error {
-	logrus.WithFields(logrus.Fields{
-		"event_type": event.GetEventType().String(),
-		"command":    event.GetCommand(),
-		"pod":       event.GetContainerContext()["pod_name"],
-		"node":      event.GetContainerContext()["node_name"],
-	}).Debug("Received security event")
-
 	// Extract container context
-	containerId := event.GetContainerContext()["container_id"]
-	podName := event.GetContainerContext()["pod_name"]
-	namespace := event.GetContainerContext()["namespace"]
+	containerContext := event.GetContainerContext()
+	containerId := containerContext["container_id"]
+	namespace := containerContext["namespace"]
+	podName := containerContext["pod_name"]
 
-	// Create base log fields
+	// Initialize fields for logging
 	fields := logrus.Fields{
-		"agent_id":      agent.AgentID,
-		"node":          agent.NodeName,
+		"agent_id":     agent.AgentID,
+		"node":         agent.NodeName,
 		"pod":          agent.PodName,
-		"event_type":    event.GetEventType().String(),
-		"pid":          event.GetPid(),
-		"ppid":         event.GetPpid(),
-		"uid":          event.GetUid(),
-		"gid":          event.GetGid(),
-		"command":      event.GetCommand(),
-		"timestamp":    event.GetTimestamp().AsTime().Format(time.RFC3339),
 		"container_id": containerId,
-		"k8s_pod":     podName,
-		"k8s_ns":      namespace,
+		"namespace":    namespace,
+		"event_type":   event.GetEventType().String(),
 	}
 
-	// Threat detection logic
 	var severity string
 	var message string
 	var alertLevel alert.AlertLevel
 
-	// Event-specific checks
+	// Process different event types
 	switch event.GetEventType() {
 	case pb.EventType_MOUNT:
 		fields["file_path"] = event.GetFilePath()
@@ -211,20 +210,16 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	case pb.EventType_CHMOD:
 		fields["file_path"] = event.GetFilePath()
 		fields["mode"] = fmt.Sprintf("%o", event.GetMode())
-		fields["uid"] = fmt.Sprintf("%d", event.GetUid())
-
-		if s.detector.isSuspiciousChmod(event.GetFilePath(), event.GetMode()) {
-			if event.GetUid() == 0 {
-				severity = "CRITICAL"
-				message = fmt.Sprintf("Root user setting suspicious permissions %o on %s",
-					event.GetMode(), event.GetFilePath())
-				alertLevel = alert.AlertLevelCritical
-			} else {
-				severity = "HIGH"
-				message = fmt.Sprintf("User setting suspicious permissions %o on %s",
-					event.GetMode(), event.GetFilePath())
-				alertLevel = alert.AlertLevelHigh
-			}
+		
+		// Log the chmod event
+		logrus.WithFields(fields).Info("📝 Chmod operation detected")
+		
+		// Check for suspicious modes (e.g., 777)
+		if event.GetMode()&0777 == 0777 {
+			severity = "HIGH"
+			message = fmt.Sprintf("World-writable permission (777) set on %s", event.GetFilePath())
+			alertLevel = alert.AlertLevelHigh
+			logrus.WithFields(fields).Warn("⚠️ " + message)
 		}
 
 	case pb.EventType_SETUID:
@@ -284,17 +279,6 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	// Log and alert if severity was set
 	if severity != "" {
-		// Log with appropriate severity
-		entry := logrus.WithFields(fields)
-		switch severity {
-		case "CRITICAL":
-			entry.Error(message)
-		case "HIGH":
-			entry.Warn(message)
-		default:
-			entry.Info(message)
-		}
-
 		// Create and dispatch alert for HIGH and CRITICAL events
 		alertContext := map[string]string{
 			"agent_id":     agent.AgentID,
@@ -340,11 +324,14 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			alertContext,
 		)
 
+		logrus.WithFields(fields).WithField("alert_level", alertLevel).Info("🚨 Dispatching alert")
 		if err := s.alerter.Dispatch(alert); err != nil {
-			entry.WithError(err).Error("Failed to dispatch alert")
+			logrus.WithError(err).Error("❌ Failed to dispatch alert")
+		} else {
+			logrus.WithFields(fields).Info("✅ Alert dispatched successfully")
 		}
 	} else {
-		logrus.WithFields(fields).Info("Security event received")
+		logrus.WithFields(fields).Debug("✓ Security event processed (no alert needed)")
 	}
 
 	return nil

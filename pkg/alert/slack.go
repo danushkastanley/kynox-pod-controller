@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"github.com/sirupsen/logrus"
 )
 
 type SlackNotifier struct {
@@ -57,8 +58,17 @@ func (s *SlackNotifier) IsEnabled() bool {
 
 func (s *SlackNotifier) Send(alert *Alert) error {
 	if !s.enabled {
+		logrus.Debug("⏭️ Skipping Slack notification (not enabled)")
 		return fmt.Errorf("slack notifications not enabled")
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"alert_level": alert.Level,
+		"title": alert.Title,
+		"node": alert.NodeName,
+		"pod": alert.PodName,
+		"namespace": alert.Namespace,
+	}).Info("📤 Preparing Slack notification")
 
 	// Create rich Slack message
 	msg := s.createSlackMessage(alert)
@@ -66,19 +76,28 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 	// Convert to JSON
 	payload, err := json.Marshal(msg)
 	if err != nil {
+		logrus.WithError(err).Error("❌ Failed to marshal Slack message")
 		return fmt.Errorf("failed to marshal slack message: %v", err)
 	}
 
 	// Send to Slack
+	logrus.Debug("📡 Sending message to Slack...")
 	resp, err := http.Post(s.webhookURL, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
+		logrus.WithError(err).Error("❌ Failed to send Slack message")
 		return fmt.Errorf("failed to send slack message: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		logrus.WithField("status_code", resp.StatusCode).Error("❌ Slack API returned error")
 		return fmt.Errorf("slack API returned non-200 status: %d", resp.StatusCode)
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"alert_level": alert.Level,
+		"title": alert.Title,
+	}).Info("✅ Slack notification sent successfully")
 
 	return nil
 }
