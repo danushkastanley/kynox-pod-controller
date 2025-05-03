@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	pb "pod-controller/pkg/telemetry"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -23,15 +24,17 @@ type ConnectedAgent struct {
 
 type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
-	mu      sync.RWMutex
-	agents  map[string]*ConnectedAgent // key: agent_id
-	timeout time.Duration // timeout for inactive agents
+	mu       sync.RWMutex
+	agents   map[string]*ConnectedAgent // key: agent_id
+	timeout  time.Duration              // timeout for inactive agents
+	detector *ThreatDetector
 }
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	return &TelemetryServer{
-		agents:  make(map[string]*ConnectedAgent),
-		timeout: timeout,
+		agents:   make(map[string]*ConnectedAgent),
+		timeout:  timeout,
+		detector: NewThreatDetector(),
 	}
 }
 
@@ -147,12 +150,130 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 }
 
 func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *ConnectedAgent) error {
-	// Process the security event
-	// Add your event processing logic here
+	// Extract container context
+	containerId := event.ContainerContext["container_id"]
+	podName := event.ContainerContext["pod_name"]
+	namespace := event.ContainerContext["namespace"]
+
+	// Create base log fields
+	fields := logrus.Fields{
+		"agent_id":      agent.AgentID,
+		"node":          agent.NodeName,
+		"pod":          agent.PodName,
+		"event_type":    event.GetEventType().String(),
+		"pid":          event.GetPid(),
+		"ppid":         event.GetPpid(),
+		"uid":          event.GetUid(),
+		"gid":          event.GetGid(),
+		"command":      event.GetCommand(),
+		"timestamp":    event.GetTimestamp().AsTime().Format(time.RFC3339),
+		"container_id": containerId,
+		"k8s_pod":     podName,
+		"k8s_ns":      namespace,
+	}
+
+	// Add context-specific fields
+	switch event.GetEventType() {
+	case pb.EventType_EXEC:
+		fields["file_path"] = event.GetFilePath()
+	case pb.EventType_CONNECT, pb.EventType_BIND, pb.EventType_ACCEPT:
+		fields["src_ip"] = event.GetSourceIp()
+		fields["src_port"] = event.GetSourcePort()
+		fields["dst_ip"] = event.GetDestinationIp()
+		fields["dst_port"] = event.GetDestinationPort()
+	case pb.EventType_OPEN:
+		fields["file_path"] = event.GetFilePath()
+	case pb.EventType_PTRACE:
+		fields["ptrace_request"] = event.GetPtraceRequest()
+		fields["ptrace_target"] = event.GetPtraceTargetPid()
+	case pb.EventType_MOUNT, pb.EventType_UMOUNT:
+		fields["file_path"] = event.GetFilePath()
+	}
+
+	// Threat detection logic
+	var severity string
+	var message string
+
+	// Check for high-risk events first
+	if s.detector.isPrivilegedOperation(event) {
+		severity = "WARNING"
+		message = "Privileged operation detected"
+	}
+
+	// Event-specific checks
+	switch event.GetEventType() {
+	case pb.EventType_EXEC:
+		if s.detector.isSuspiciousCommand(event.GetCommand()) {
+			severity = "WARNING"
+			message = "Suspicious command execution detected"
+		}
+		if s.detector.detectAnomalousProcessSpawning(event, containerId) {
+			severity = "WARNING"
+			message = "Anomalous process spawning detected"
+		}
+
+	case pb.EventType_OPEN:
+		if s.detector.isSuspiciousFileAccess(event.GetFilePath()) {
+			severity = "WARNING"
+			message = "Sensitive file access detected"
+		}
+
+	case pb.EventType_CONNECT:
+		if s.detector.isExternalConnection(event.GetDestinationIp()) {
+			severity = "WARNING"
+			message = "External network connection detected"
+		}
+		if s.detector.detectAnomalousNetworkActivity(event, containerId) {
+			severity = "WARNING"
+			message = "Anomalous network activity detected"
+		}
+
+	case pb.EventType_PTRACE:
+		if s.detector.isSuspiciousPtraceOperation(event.GetPtraceRequest(), event.GetPtraceTargetPid()) {
+			severity = "CRITICAL"
+			message = "Suspicious ptrace operation detected"
+		}
+
+	case pb.EventType_SETUID:
+		if event.GetUid() == 0 {
+			severity = "CRITICAL"
+			message = "Potential privilege escalation detected"
+		}
+
+	case pb.EventType_MOUNT:
+		if s.detector.isSuspiciousMount(event.GetFilePath()) {
+			severity = "CRITICAL"
+			message = "Suspicious mount operation detected"
+		}
+
+	case pb.EventType_BPF_PROG:
+		severity = "CRITICAL"
+		message = "BPF program loading detected"
+
+	case pb.EventType_SECCOMP:
+		severity = "WARNING"
+		message = "Seccomp filter modification detected"
+	}
+
+	// Log with appropriate severity
+	entry := logrus.WithFields(fields)
+	if severity != "" {
+		fields["alert"] = message
+		switch severity {
+		case "CRITICAL":
+			entry.Error(message)
+		case "WARNING":
+			entry.Warn(message)
+		default:
+			entry.Info(message)
+		}
+	} else {
+		entry.Info("Security event received")
+	}
+
 	return nil
 }
 
-// CleanupInactiveAgents starts a goroutine that periodically removes inactive agents
 func (s *TelemetryServer) CleanupInactiveAgents() {
 	ticker := time.NewTicker(s.timeout / 2)
 	for range ticker.C {
