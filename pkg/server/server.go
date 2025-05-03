@@ -20,6 +20,7 @@ type ConnectedAgent struct {
 	PodName   string
 	SessionID string
 	LastSeen  time.Time
+	Metadata  map[string]string
 }
 
 type TelemetryServer struct {
@@ -66,6 +67,7 @@ func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectReque
 		PodName:   req.PodName,
 		SessionID: sessionID,
 		LastSeen:  time.Now(),
+		Metadata:  make(map[string]string),
 	}
 
 	s.mu.Lock()
@@ -158,6 +160,13 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 }
 
 func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *ConnectedAgent) error {
+	logrus.WithFields(logrus.Fields{
+		"event_type": event.EventType.String(),
+		"command":    event.Command,
+		"pod":       event.ContainerContext["pod_name"],
+		"node":      event.ContainerContext["node_name"],
+	}).Debug("Received security event")
+
 	// Extract container context
 	containerId := event.ContainerContext["container_id"]
 	podName := event.ContainerContext["pod_name"]
@@ -168,34 +177,34 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		"agent_id":      agent.AgentID,
 		"node":          agent.NodeName,
 		"pod":          agent.PodName,
-		"event_type":    event.GetEventType().String(),
-		"pid":          event.GetPid(),
-		"ppid":         event.GetPpid(),
-		"uid":          event.GetUid(),
-		"gid":          event.GetGid(),
-		"command":      event.GetCommand(),
-		"timestamp":    event.GetTimestamp().AsTime().Format(time.RFC3339),
+		"event_type":    event.EventType.String(),
+		"pid":          event.Pid,
+		"ppid":         event.Ppid,
+		"uid":          event.Uid,
+		"gid":          event.Gid,
+		"command":      event.Command,
+		"timestamp":    event.Timestamp.AsTime().Format(time.RFC3339),
 		"container_id": containerId,
 		"k8s_pod":     podName,
 		"k8s_ns":      namespace,
 	}
 
 	// Add context-specific fields
-	switch event.GetEventType() {
+	switch event.EventType {
 	case pb.EventType_EXEC:
-		fields["file_path"] = event.GetFilePath()
+		fields["file_path"] = event.FilePath
 	case pb.EventType_CONNECT, pb.EventType_BIND, pb.EventType_ACCEPT:
-		fields["src_ip"] = event.GetSourceIp()
-		fields["src_port"] = event.GetSourcePort()
-		fields["dst_ip"] = event.GetDestinationIp()
-		fields["dst_port"] = event.GetDestinationPort()
+		fields["src_ip"] = event.SourceIp
+		fields["src_port"] = event.SourcePort
+		fields["dst_ip"] = event.DestinationIp
+		fields["dst_port"] = event.DestinationPort
 	case pb.EventType_OPEN:
-		fields["file_path"] = event.GetFilePath()
+		fields["file_path"] = event.FilePath
 	case pb.EventType_PTRACE:
-		fields["ptrace_request"] = event.GetPtraceRequest()
-		fields["ptrace_target"] = event.GetPtraceTargetPid()
+		fields["ptrace_request"] = event.PtraceRequest
+		fields["ptrace_target"] = event.PtraceTargetPid
 	case pb.EventType_MOUNT, pb.EventType_UMOUNT:
-		fields["file_path"] = event.GetFilePath()
+		fields["file_path"] = event.FilePath
 	}
 
 	// Threat detection logic
@@ -211,12 +220,38 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	}
 
 	// Event-specific checks
-	switch event.GetEventType() {
+	switch event.EventType {
 	case pb.EventType_EXEC:
-		if s.detector.isSuspiciousCommand(event.GetCommand()) {
+		if s.detector.isSuspiciousCommand(event.Command) {
 			severity = "WARNING"
 			message = "Suspicious command execution detected"
 			alertLevel = alert.AlertLevelWarning
+
+			logrus.WithFields(logrus.Fields{
+				"command": event.Command,
+				"pod":    event.ContainerContext["pod_name"],
+				"node":   event.ContainerContext["node_name"],
+			}).Warn("⚠️ Suspicious command execution detected")
+
+			// Create and send alert
+			alert := &alert.Alert{
+				Title: "Suspicious Command Execution",
+				Message: fmt.Sprintf("🚨 Suspicious command detected:\n"+
+					"Command: %s\n"+
+					"Pod: %s\n"+
+					"Node: %s\n"+
+					"Container: %s",
+					event.Command,
+					event.ContainerContext["pod_name"],
+					event.ContainerContext["node_name"],
+					event.ContainerContext["container_name"]),
+				Level:     alert.AlertLevelWarning,
+				EventType: event.EventType.String(),
+			}
+
+			if err := s.alerter.Dispatch(alert); err != nil {
+				logrus.Errorf("Failed to send alert: %v", err)
+			}
 		}
 		if s.detector.detectAnomalousProcessSpawning(event, containerId) {
 			severity = "WARNING"
@@ -225,14 +260,14 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		}
 
 	case pb.EventType_OPEN:
-		if s.detector.isSuspiciousFileAccess(event.GetFilePath()) {
+		if s.detector.isSuspiciousFileAccess(event.FilePath) {
 			severity = "WARNING"
 			message = "Sensitive file access detected"
 			alertLevel = alert.AlertLevelWarning
 		}
 
 	case pb.EventType_CONNECT:
-		if s.detector.isExternalConnection(event.GetDestinationIp()) {
+		if s.detector.isExternalConnection(event.DestinationIp) {
 			severity = "WARNING"
 			message = "External network connection detected"
 			alertLevel = alert.AlertLevelWarning
@@ -244,21 +279,21 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		}
 
 	case pb.EventType_PTRACE:
-		if s.detector.isSuspiciousPtraceOperation(event.GetPtraceRequest(), event.GetPtraceTargetPid()) {
+		if s.detector.isSuspiciousPtraceOperation(event.PtraceRequest, event.PtraceTargetPid) {
 			severity = "CRITICAL"
 			message = "Suspicious ptrace operation detected"
 			alertLevel = alert.AlertLevelCritical
 		}
 
 	case pb.EventType_SETUID:
-		if event.GetUid() == 0 {
+		if event.Uid == 0 {
 			severity = "CRITICAL"
 			message = "Potential privilege escalation detected"
 			alertLevel = alert.AlertLevelCritical
 		}
 
 	case pb.EventType_MOUNT:
-		if s.detector.isSuspiciousMount(event.GetFilePath()) {
+		if s.detector.isSuspiciousMount(event.FilePath) {
 			severity = "CRITICAL"
 			message = "Suspicious mount operation detected"
 			alertLevel = alert.AlertLevelCritical
@@ -296,35 +331,35 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 				"pod_name":     agent.PodName,
 				"container_id": containerId,
 				"namespace":    namespace,
-				"event_type":   event.GetEventType().String(),
-				"command":      event.GetCommand(),
+				"event_type":   event.EventType.String(),
+				"command":      event.Command,
 			}
 
 			// Add process info
-			alertContext["proc_pid"] = fmt.Sprintf("%d", event.GetPid())
-			alertContext["proc_ppid"] = fmt.Sprintf("%d", event.GetPpid())
-			alertContext["proc_uid"] = fmt.Sprintf("%d", event.GetUid())
-			alertContext["proc_gid"] = fmt.Sprintf("%d", event.GetGid())
+			alertContext["proc_pid"] = fmt.Sprintf("%d", event.Pid)
+			alertContext["proc_ppid"] = fmt.Sprintf("%d", event.Ppid)
+			alertContext["proc_uid"] = fmt.Sprintf("%d", event.Uid)
+			alertContext["proc_gid"] = fmt.Sprintf("%d", event.Gid)
 
 			// Add network info if present
-			if event.GetSourceIp() != "" {
-				alertContext["net_src_ip"] = event.GetSourceIp()
-				alertContext["net_src_port"] = fmt.Sprintf("%d", event.GetSourcePort())
+			if event.SourceIp != "" {
+				alertContext["net_src_ip"] = event.SourceIp
+				alertContext["net_src_port"] = fmt.Sprintf("%d", event.SourcePort)
 			}
-			if event.GetDestinationIp() != "" {
-				alertContext["net_dst_ip"] = event.GetDestinationIp()
-				alertContext["net_dst_port"] = fmt.Sprintf("%d", event.GetDestinationPort())
+			if event.DestinationIp != "" {
+				alertContext["net_dst_ip"] = event.DestinationIp
+				alertContext["net_dst_port"] = fmt.Sprintf("%d", event.DestinationPort)
 			}
 
 			// Add file info if present
-			if event.GetFilePath() != "" {
-				alertContext["file_path"] = event.GetFilePath()
+			if event.FilePath != "" {
+				alertContext["file_path"] = event.FilePath
 			}
 
 			// Add security info if present
-			if event.GetPtraceRequest() != 0 {
-				alertContext["sec_ptrace_req"] = fmt.Sprintf("%d", event.GetPtraceRequest())
-				alertContext["sec_ptrace_target"] = fmt.Sprintf("%d", event.GetPtraceTargetPid())
+			if event.PtraceRequest != 0 {
+				alertContext["sec_ptrace_req"] = fmt.Sprintf("%d", event.PtraceRequest)
+				alertContext["sec_ptrace_target"] = fmt.Sprintf("%d", event.PtraceTargetPid)
 			}
 
 			alert := alert.CreateAlert(
