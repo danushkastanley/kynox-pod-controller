@@ -218,43 +218,23 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	// Check for high-risk events first
 	if s.detector.isPrivilegedOperation(event) {
-		severity = "CRITICAL"
+		severity = "HIGH"
 		message = "Privileged operation detected"
-		alertLevel = alert.AlertLevelCritical
+		alertLevel = alert.AlertLevelHigh
 	}
 
 	// Event-specific checks
 	switch event.EventType {
 	case pb.EventType_EXEC:
 		if s.detector.isSuspiciousCommand(event.Command) {
-			severity = "HIGH"
-			message = "Suspicious command execution detected"
-			alertLevel = alert.AlertLevelHigh
-
-			logrus.WithFields(logrus.Fields{
-				"command": event.Command,
-				"pod":    event.ContainerContext["pod_name"],
-				"node":   event.ContainerContext["node_name"],
-			}).Warn("⚠️ Suspicious command execution detected")
-
-			// Create and send alert
-			alert := &alert.Alert{
-				Title: "Suspicious Command Execution",
-				Message: fmt.Sprintf("🚨 Suspicious command detected:\n"+
-					"Command: %s\n"+
-					"Pod: %s\n"+
-					"Node: %s\n"+
-					"Container: %s",
-					event.Command,
-					event.ContainerContext["pod_name"],
-					event.ContainerContext["node_name"],
-					event.ContainerContext["container_name"]),
-				Level:     alert.AlertLevelHigh,
-				EventType: event.EventType.String(),
-			}
-
-			if err := s.alerter.Dispatch(alert); err != nil {
-				logrus.Errorf("Failed to send alert: %v", err)
+			if event.Uid == 0 {
+				severity = "CRITICAL"
+				message = fmt.Sprintf("Root execution of suspicious command: %s", event.Command)
+				alertLevel = alert.AlertLevelCritical
+			} else {
+				severity = "HIGH"
+				message = fmt.Sprintf("Suspicious command execution: %s", event.Command)
+				alertLevel = alert.AlertLevelHigh
 			}
 		}
 		if s.detector.detectAnomalousProcessSpawning(event, containerId) {
@@ -272,41 +252,68 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	case pb.EventType_CONNECT:
 		if s.detector.isExternalConnection(event.DestinationIp) {
-			severity = "HIGH"
-			message = "External network connection detected"
-			alertLevel = alert.AlertLevelHigh
+			// Network tools run as root are especially concerning
+			if event.Uid == 0 && s.detector.isSuspiciousCommand(event.Command) {
+				severity = "CRITICAL"
+				message = fmt.Sprintf("Root initiated external connection using %s to %s:%d", 
+					event.Command, event.DestinationIp, event.DestinationPort)
+				alertLevel = alert.AlertLevelCritical
+			} else {
+				severity = "HIGH"
+				message = fmt.Sprintf("External connection detected to %s:%d", 
+					event.DestinationIp, event.DestinationPort)
+				alertLevel = alert.AlertLevelHigh
+			}
 		}
 		if s.detector.detectAnomalousNetworkActivity(event, containerId) {
-			severity = "HIGH"
-			message = "Anomalous network activity detected"
-			alertLevel = alert.AlertLevelHigh
+			severity = "CRITICAL"
+			message = "Potential network scanning detected"
+			alertLevel = alert.AlertLevelCritical
 		}
 
 	case pb.EventType_PTRACE:
 		if s.detector.isSuspiciousPtraceOperation(event.PtraceRequest, event.PtraceTargetPid) {
 			severity = "CRITICAL"
-			message = "Suspicious ptrace operation detected"
+			message = "Memory modification attempt detected"
 			alertLevel = alert.AlertLevelCritical
+		} else {
+			severity = "HIGH"
+			message = "Process debugging detected"
+			alertLevel = alert.AlertLevelHigh
 		}
 
 	case pb.EventType_SETUID:
 		if event.Uid == 0 {
 			severity = "CRITICAL"
-			message = "Potential privilege escalation detected"
+			message = "Root privilege escalation detected"
 			alertLevel = alert.AlertLevelCritical
+		} else {
+			severity = "HIGH"
+			message = "User privilege change detected"
+			alertLevel = alert.AlertLevelHigh
 		}
 
 	case pb.EventType_MOUNT:
 		if s.detector.isSuspiciousMount(event.FilePath) {
 			severity = "CRITICAL"
-			message = "Suspicious mount operation detected"
+			message = "Sensitive filesystem mount detected"
 			alertLevel = alert.AlertLevelCritical
+		} else {
+			severity = "HIGH"
+			message = "Filesystem mount detected"
+			alertLevel = alert.AlertLevelHigh
 		}
 
 	case pb.EventType_BPF_PROG:
-		severity = "CRITICAL"
-		message = "BPF program loading detected"
-		alertLevel = alert.AlertLevelCritical
+		if event.Uid == 0 {
+			severity = "CRITICAL"
+			message = "Root BPF program loading detected"
+			alertLevel = alert.AlertLevelCritical
+		} else {
+			severity = "HIGH"
+			message = "BPF program loading detected"
+			alertLevel = alert.AlertLevelHigh
+		}
 
 	case pb.EventType_SECCOMP:
 		severity = "HIGH"
