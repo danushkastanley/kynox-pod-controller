@@ -135,6 +135,17 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 		)
 	}
 
+	// Add container context if present
+	if len(alert.ContainerContext) > 0 {
+		var containerDetails []string
+		for k, v := range alert.ContainerContext {
+			containerDetails = append(containerDetails, fmt.Sprintf("• %s: %s", k, v))
+		}
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: "*Container Info:*\n" + strings.Join(containerDetails, "\n")},
+		)
+	}
+
 	// Add process info if present
 	if len(alert.ProcessInfo) > 0 {
 		var processDetails []string
