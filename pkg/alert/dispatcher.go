@@ -109,11 +109,16 @@ func (d *AlertDispatcher) Dispatch(alert *Alert) error {
 // CreateAlert creates a new alert with the given parameters
 func CreateAlert(level AlertLevel, title, message string, context map[string]string) *Alert {
 	alert := &Alert{
-		ID:        uuid.New().String(),
-		Level:     level,
-		Title:     title,
-		Message:   message,
-		Timestamp: time.Now(),
+		ID:              uuid.New().String(),
+		Level:           level,
+		Title:           title,
+		Message:         message,
+		Timestamp:       time.Now(),
+		ProcessInfo:     make(map[string]string),
+		NetworkInfo:     make(map[string]string),
+		FileInfo:        make(map[string]string),
+		SecurityInfo:    make(map[string]string),
+		ContainerContext: make(map[string]string),
 	}
 
 	// Add context information if provided
@@ -141,11 +146,6 @@ func CreateAlert(level AlertLevel, title, message string, context map[string]str
 		}
 
 		// Process additional info maps
-		alert.ProcessInfo = make(map[string]string)
-		alert.NetworkInfo = make(map[string]string)
-		alert.FileInfo = make(map[string]string)
-		alert.SecurityInfo = make(map[string]string)
-
 		for k, v := range context {
 			switch {
 			case k[:4] == "proc":
@@ -156,6 +156,8 @@ func CreateAlert(level AlertLevel, title, message string, context map[string]str
 				alert.FileInfo[k[5:]] = v
 			case k[:3] == "sec":
 				alert.SecurityInfo[k[4:]] = v
+			case k[:4] == "cont":
+				alert.ContainerContext[k[5:]] = v
 			}
 		}
 	}

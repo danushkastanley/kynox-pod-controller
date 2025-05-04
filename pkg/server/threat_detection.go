@@ -205,6 +205,13 @@ func (td *ThreatDetector) detectAnomalousProcessSpawning(event *pb.SecurityEvent
 	td.mu.Lock()
 	defer td.mu.Unlock()
 
+	// Use container ID from event context if available
+	if containerCtx := event.GetContainerContext(); containerCtx != nil {
+		if id := containerCtx["container_id"]; id != "" {
+			containerId = id
+		}
+	}
+
 	tracker, exists := td.processSpawnCount[containerId]
 	if !exists {
 		td.processSpawnCount[containerId] = &SpawnTracker{
@@ -230,6 +237,13 @@ func (td *ThreatDetector) detectAnomalousProcessSpawning(event *pb.SecurityEvent
 func (td *ThreatDetector) detectAnomalousNetworkActivity(event *pb.SecurityEvent, containerId string) bool {
 	td.mu.Lock()
 	defer td.mu.Unlock()
+
+	// Use container ID from event context if available
+	if containerCtx := event.GetContainerContext(); containerCtx != nil {
+		if id := containerCtx["container_id"]; id != "" {
+			containerId = id
+		}
+	}
 
 	tracker, exists := td.networkConnCount[containerId]
 	if !exists {
