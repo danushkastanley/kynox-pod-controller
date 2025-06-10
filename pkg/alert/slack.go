@@ -108,6 +108,8 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 	switch alert.Level {
 	case AlertLevelCritical:
 		emoji = "🚨"
+	case AlertLevelHigh:
+		emoji = "🔴"
 	case AlertLevelWarning:
 		emoji = "⚠️"
 	default:
@@ -120,7 +122,7 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 	// Create context blocks
 	var contextFields []slackField
 	
-	// Add basic info
+	// Add target information (where the event occurred)
 	contextFields = append(contextFields,
 		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Node:* %s", alert.NodeName)},
 		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Pod:* %s", alert.PodName)},
@@ -135,37 +137,97 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 		)
 	}
 
-	// Add container context if present
+	// Add monitoring context if present
 	if len(alert.ContainerContext) > 0 {
-		var containerDetails []string
-		for k, v := range alert.ContainerContext {
-			containerDetails = append(containerDetails, fmt.Sprintf("• %s: %s", k, v))
+		var monitoringDetails []string
+		
+		// Check if we have monitoring agent info
+		if monitoringAgent, exists := alert.ContainerContext["monitoring_agent"]; exists {
+			monitoringDetails = append(monitoringDetails, fmt.Sprintf("• Detected by: %s", monitoringAgent))
 		}
-		contextFields = append(contextFields,
-			slackField{Type: "mrkdwn", Text: "*Container Info:*\n" + strings.Join(containerDetails, "\n")},
-		)
+		if monitoringNode, exists := alert.ContainerContext["monitoring_node"]; exists {
+			monitoringDetails = append(monitoringDetails, fmt.Sprintf("• Monitor node: %s", monitoringNode))
+		}
+		if targetContainer, exists := alert.ContainerContext["target_container_id"]; exists && targetContainer != "" {
+			if len(targetContainer) > 12 {
+				monitoringDetails = append(monitoringDetails, fmt.Sprintf("• Container ID: %s...", targetContainer[:12]))
+			} else {
+				monitoringDetails = append(monitoringDetails, fmt.Sprintf("• Container ID: %s", targetContainer))
+			}
+		}
+		
+		// Add other container context if not part of monitoring info
+		for k, v := range alert.ContainerContext {
+			if !strings.HasPrefix(k, "monitoring_") && !strings.HasPrefix(k, "target_") && v != "" {
+				monitoringDetails = append(monitoringDetails, fmt.Sprintf("• %s: %s", k, v))
+			}
+		}
+		
+		if len(monitoringDetails) > 0 {
+			contextFields = append(contextFields,
+				slackField{Type: "mrkdwn", Text: "*Monitoring Context:*\n" + strings.Join(monitoringDetails, "\n")},
+			)
+		}
 	}
 
 	// Add process info if present
 	if len(alert.ProcessInfo) > 0 {
 		var processDetails []string
 		for k, v := range alert.ProcessInfo {
-			processDetails = append(processDetails, fmt.Sprintf("• %s: %s", k, v))
+			if v != "" && v != "0" { // Don't show empty or zero values for cleaner display
+				processDetails = append(processDetails, fmt.Sprintf("• %s: %s", k, v))
+			}
 		}
-		contextFields = append(contextFields,
-			slackField{Type: "mrkdwn", Text: "*Process Info:*\n" + strings.Join(processDetails, "\n")},
-		)
+		if len(processDetails) > 0 {
+			contextFields = append(contextFields,
+				slackField{Type: "mrkdwn", Text: "*Process Info:*\n" + strings.Join(processDetails, "\n")},
+			)
+		}
 	}
 
-	// Add network info if present
+	// Add network info if present and not empty
 	if len(alert.NetworkInfo) > 0 {
 		var networkDetails []string
 		for k, v := range alert.NetworkInfo {
-			networkDetails = append(networkDetails, fmt.Sprintf("• %s: %s", k, v))
+			if v != "" && v != "0" { // Don't show empty or zero values
+				networkDetails = append(networkDetails, fmt.Sprintf("• %s: %s", k, v))
+			}
 		}
-		contextFields = append(contextFields,
-			slackField{Type: "mrkdwn", Text: "*Network Info:*\n" + strings.Join(networkDetails, "\n")},
-		)
+		if len(networkDetails) > 0 {
+			contextFields = append(contextFields,
+				slackField{Type: "mrkdwn", Text: "*Network Info:*\n" + strings.Join(networkDetails, "\n")},
+			)
+		}
+	}
+
+	// Add file info if present
+	if len(alert.FileInfo) > 0 {
+		var fileDetails []string
+		for k, v := range alert.FileInfo {
+			if v != "" {
+				fileDetails = append(fileDetails, fmt.Sprintf("• %s: %s", k, v))
+			}
+		}
+		if len(fileDetails) > 0 {
+			contextFields = append(contextFields,
+				slackField{Type: "mrkdwn", Text: "*File Info:*\n" + strings.Join(fileDetails, "\n")},
+			)
+		}
+	}
+
+	// Add security context
+	if len(alert.SecurityInfo) > 0 {
+		var securityDetails []string
+		for k, v := range alert.SecurityInfo {
+			if v != "" && k != "message" { // Skip message as it's already in the main text
+				securityDetails = append(securityDetails, fmt.Sprintf("• %s: %s", k, v))
+			}
+		}
+		if len(securityDetails) > 0 {
+			contextFields = append(contextFields,
+				slackField{Type: "mrkdwn", Text: "*Security Context:*\n" + strings.Join(securityDetails, "\n")},
+			)
+		}
 	}
 
 	return slackMessage{

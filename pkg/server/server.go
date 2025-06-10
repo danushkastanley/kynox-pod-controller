@@ -295,15 +295,28 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	namespace := containerContext["namespace"]
 	podName := containerContext["pod_name"]
 
-	// Initialize fields for logging
+	// Handle missing container context - use agent info as fallback
+	if namespace == "" {
+		namespace = "default" // or extract from agent if available
+	}
+	if podName == "" {
+		podName = agent.PodName // fallback to agent pod if target pod unknown
+	}
+
+	// Initialize fields for logging with clear distinction between agent and target
 	fields := logrus.Fields{
 		"agent_id":     agent.AgentID,
-		"node":         agent.NodeName,
-		"pod":          agent.PodName,
+		"agent_node":   agent.NodeName,
+		"agent_pod":    agent.PodName,
+		"target_namespace": namespace,
+		"target_pod":   podName,
+		"target_container": containerId,
 		"event_type":   pb.EventType_name[int32(event.EventType)],
 		"command":      event.Command,
 		"pid":          event.Pid,
 		"ppid":         event.Ppid,
+		"uid":          event.Uid,
+		"gid":          event.Gid,
 	}
 
 	// Add optional fields if present
@@ -341,7 +354,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	// Update metrics
 	s.updateMetrics(pb.EventType_name[int32(event.EventType)], severity)
 
-	// Create alert key for aggregation
+	// Create alert key for aggregation using target pod information
 	alertKey := AlertKey{
 		EventType:   pb.EventType_name[int32(event.EventType)],
 		Command:     event.Command,
@@ -351,26 +364,48 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		Severity:    string(severity),
 	}
 
-	// Create alert message
-	alertMsg := fmt.Sprintf("%s event detected in pod %s/%s: %s (%s)", 
-		pb.EventType_name[int32(event.EventType)],
-		namespace,
-		podName,
-		event.Command,
-		msg)
+	// Create alert message with clearer context
+	var alertMsg string
+	if podName == agent.PodName {
+		// Event occurred in the monitoring agent itself
+		alertMsg = fmt.Sprintf("%s event detected in monitoring agent %s/%s: %s (%s)", 
+			pb.EventType_name[int32(event.EventType)],
+			namespace,
+			podName,
+			event.Command,
+			msg)
+	} else {
+		// Event occurred in a different pod being monitored
+		alertMsg = fmt.Sprintf("%s event detected in pod %s/%s (monitored by %s): %s (%s)", 
+			pb.EventType_name[int32(event.EventType)],
+			namespace,
+			podName,
+			agent.PodName,
+			event.Command,
+			msg)
+	}
 
 	// Check if we should send alert based on aggregation
 	if s.aggregateAlert(alertKey, alertMsg) {
 		// Send alert if rate limit allows
 		if s.alertLimiter.Allow() {
+			// Create container context for alert with both agent and target info
+			alertContainerContext := map[string]string{
+				"monitoring_agent":    agent.PodName,
+				"monitoring_node":     agent.NodeName,
+				"target_pod":          podName,
+				"target_namespace":    namespace,
+				"target_container_id": containerId,
+			}
+
 			if err := s.alerter.Dispatch(&alert.Alert{
 				Level:     s.getAlertLevel(severity),
 				Title:    fmt.Sprintf("%s Security Event", severity),
 				Message:  alertMsg,
 				AgentID:  agent.AgentID,
 				NodeName: agent.NodeName,
-				PodName:  podName,
-				Namespace: namespace,
+				PodName:  podName,        // Target pod where event occurred
+				Namespace: namespace,     // Target namespace
 				EventType: pb.EventType_name[int32(event.EventType)],
 				Command:   event.Command,
 				ProcessInfo: map[string]string{
@@ -392,6 +427,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 					"severity": string(severity),
 					"message":  msg,
 				},
+				ContainerContext: alertContainerContext,
 				Timestamp: time.Now(),
 			}); err != nil {
 				logrus.WithError(err).Error("Failed to send alert")
