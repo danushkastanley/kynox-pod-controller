@@ -45,11 +45,12 @@ type AlertAggregation struct {
 
 type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
-	agents       map[string]*ConnectedAgent
-	mu           sync.RWMutex
-	classifier   *classifier.EventClassifier
-	alertLimiter *rate.Limiter
-	alerter      *alert.AlertDispatcher
+	agents         map[string]*ConnectedAgent
+	mu             sync.RWMutex
+	classifier     *classifier.EventClassifier
+	threatDetector *ThreatDetector
+	alertLimiter   *rate.Limiter
+	alerter        *alert.AlertDispatcher
 	// Metrics
 	eventCounts    map[string]int64
 	severityCounts map[string]int64
@@ -67,9 +68,13 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 		logrus.WithError(err).Fatal("Failed to create alert dispatcher")
 	}
 
+	// Create threat detector
+	threatDetector := NewThreatDetector()
+
 	return &TelemetryServer{
 		agents:           make(map[string]*ConnectedAgent),
-		classifier:       classifier.NewEventClassifier(),
+		classifier:       classifier.NewEventClassifier(threatDetector),
+		threatDetector:   threatDetector,
 		alertLimiter:     rate.NewLimiter(rate.Every(1*time.Second), 1),
 		alerter:          alertDispatcher,
 		eventCounts:      make(map[string]int64),
