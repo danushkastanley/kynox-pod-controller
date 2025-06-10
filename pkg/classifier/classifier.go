@@ -19,10 +19,10 @@ const (
 // EventClassifier determines the severity of security events
 type EventClassifier struct {
 	// Configurable rules
-	suspiciousCommands    map[string]bool
-	sensitivePaths       map[string]bool
+	suspiciousCommands     map[string]bool
+	sensitivePaths         map[string]bool
 	suspiciousNetworkPorts map[int32]bool
-	trustedProcesses     map[string]bool
+	trustedProcesses       map[string]bool
 }
 
 // NewEventClassifier creates a new event classifier with default rules
@@ -43,13 +43,17 @@ func NewEventClassifier() *EventClassifier {
 			"wireshark": true,
 		},
 		sensitivePaths: map[string]bool{
-			"/etc/shadow":           true,
-			"/etc/passwd":           true,
+			"/etc/shadow":          true,
+			"/etc/passwd":          true,
 			"/etc/sudoers":         true,
-			"/etc/kubernetes":       true,
+			"/etc/kubernetes":      true,
 			"/var/run/docker.sock": true,
-			"/proc":                true,
-			"/sys":                 true,
+			// Make /proc and /sys less sensitive - only specific critical paths
+			"/proc/sys/kernel":  true,
+			"/proc/sys/net":     true,
+			"/proc/1/":          true, // Init process files are critical
+			"/sys/kernel/debug": true,
+			"/sys/class/dmi":    true,
 		},
 		suspiciousNetworkPorts: map[int32]bool{
 			22:    true, // SSH
@@ -61,16 +65,25 @@ func NewEventClassifier() *EventClassifier {
 			3306:  true, // MySQL
 		},
 		trustedProcesses: map[string]bool{
-			"runc:[2:INIT]":        true,
-			"containerd":           true,
-			"containerd-shim":      true,
-			"docker":               true,
-			"kubelet":              true,
-			"k3s":                  true,
-			"k3s-agent":           true,
-			"k3s-server":          true,
-			"cri-o":               true,
-			"cri-containerd":      true,
+			"runc:[2:INIT]":   true,
+			"containerd":      true,
+			"containerd-shim": true,
+			"docker":          true,
+			"kubelet":         true,
+			"k3s":             true,
+			"k3s-agent":       true,
+			"k3s-server":      true,
+			"cri-o":           true,
+			"cri-containerd":  true,
+			// Add monitoring and system processes
+			"agent":           true, // Our monitoring agent
+			"tokio-runtime":   true, // Rust async runtime
+			"systemd":         true, // SystemD processes
+			"systemd-oomd":    true,
+			"systemd-journal": true,
+			"thermald":        true, // Thermal daemon
+			"Chrome_IOThread": true, // Browser processes
+			"com.docker.back": true, // Docker backend
 		},
 	}
 }
@@ -128,7 +141,15 @@ func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, stri
 		return SeverityWarn, "Filesystem mount operation"
 
 	case pb.EventType_OPEN:
-		if c.isSensitivePath(event.GetFilePath()) {
+		// Special handling for common monitoring paths
+		filePath := event.GetFilePath()
+
+		// Very common monitoring paths that should be LOW severity for trusted processes
+		if (strings.HasPrefix(filePath, "/proc/") || strings.HasPrefix(filePath, "/sys/")) && c.isTrustedProcess(command) {
+			return SeverityLow, "Legitimate system monitoring"
+		}
+
+		if c.isSensitivePath(filePath) {
 			if isRoot && !c.isTrustedProcess(command) {
 				return SeverityHigh, "Sensitive file access with root privileges"
 			}
