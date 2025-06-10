@@ -416,6 +416,8 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 				"target_container_id": containerId,
 			}
 
+			logrus.Info("🚀 About to call alerter.Dispatch()...")
+
 			if err := s.alerter.Dispatch(&alert.Alert{
 				Level:     s.getAlertLevel(severity),
 				Title:     fmt.Sprintf("%s Security Event", severity),
