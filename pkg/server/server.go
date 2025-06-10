@@ -395,11 +395,22 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	}).Info("🔍 Alert aggregation check")
 
 	if shouldAlert {
-		// Send alert if rate limit allows
-		allowedByRateLimit := s.alertLimiter.Allow()
-		logrus.WithFields(logrus.Fields{
-			"rate_limit_allowed": allowedByRateLimit,
-		}).Info("🔍 Rate limit check")
+		// CRITICAL alerts bypass rate limiting for immediate response
+		var allowedByRateLimit bool
+		if severity == classifier.SeverityCritical {
+			allowedByRateLimit = true
+			logrus.WithFields(logrus.Fields{
+				"rate_limit_allowed": allowedByRateLimit,
+				"bypass_reason":      "CRITICAL severity bypasses rate limit",
+			}).Info("🔍 Rate limit check")
+		} else {
+			// Apply rate limiting to non-critical events
+			allowedByRateLimit = s.alertLimiter.Allow()
+			logrus.WithFields(logrus.Fields{
+				"rate_limit_allowed": allowedByRateLimit,
+				"severity":           severity,
+			}).Info("🔍 Rate limit check")
+		}
 
 		if allowedByRateLimit {
 			logrus.WithFields(logrus.Fields{
