@@ -76,11 +76,13 @@ func (c *Config) ShouldAlertOnLevel(level AlertLevel) bool {
 	case AlertLevelInfo:
 		return true
 	case AlertLevelWarning:
-		return level == AlertLevelWarning || level == AlertLevelCritical
+		return level == AlertLevelWarning || level == AlertLevelHigh || level == AlertLevelCritical
+	case AlertLevelHigh:
+		return level == AlertLevelHigh || level == AlertLevelCritical
 	case AlertLevelCritical:
 		return level == AlertLevelCritical
 	default:
-		return level == AlertLevelWarning || level == AlertLevelCritical
+		return level == AlertLevelWarning || level == AlertLevelHigh || level == AlertLevelCritical
 	}
 }
 

@@ -19,27 +19,46 @@ type AlertDispatcher struct {
 
 // NewAlertDispatcher creates a new AlertDispatcher with the specified notifiers
 func NewAlertDispatcher() (*AlertDispatcher, error) {
+	log.Println("🔧 Initializing alert dispatcher...")
+
 	err := godotenv.Load()
 	if err != nil {
+		log.Printf("⚠️  Failed to load .env file: %v", err)
 		return nil, fmt.Errorf("failed to load .env file: %v", err)
 	}
+	log.Println("✅ .env file loaded successfully")
 
 	config, err := LoadConfig()
 	if err != nil {
+		log.Printf("❌ Failed to load alert config: %v", err)
 		return nil, fmt.Errorf("failed to load alert config: %v", err)
 	}
+	slackStatus := "not configured"
+	if config.SlackWebhookURL != "" {
+		slackStatus = "configured"
+	}
+	log.Printf("✅ Alert config loaded: EventTypes=%v, MinLevel=%s, SlackURL=%s",
+		config.EventTypes, config.MinLevel, slackStatus)
 
 	var notifiers []AlertNotifier
 
 	// Initialize Slack notifier if configured
 	if config.SlackWebhookURL != "" {
 		notifiers = append(notifiers, NewSlackNotifier())
+		log.Println("✅ Slack notifier initialized")
+	} else {
+		log.Println("⚠️  Slack notifier not configured (no webhook URL)")
 	}
 
 	// Initialize Webhook notifier if configured
 	if config.WebhookURL != "" {
 		notifiers = append(notifiers, NewWebhookNotifier())
+		log.Println("✅ Webhook notifier initialized")
+	} else {
+		log.Println("ℹ️  Webhook notifier not configured")
 	}
+
+	log.Printf("🚀 Alert dispatcher initialized with %d notifiers", len(notifiers))
 
 	return &AlertDispatcher{
 		notifiers: notifiers,
@@ -109,15 +128,15 @@ func (d *AlertDispatcher) Dispatch(alert *Alert) error {
 // CreateAlert creates a new alert with the given parameters
 func CreateAlert(level AlertLevel, title, message string, context map[string]string) *Alert {
 	alert := &Alert{
-		ID:              uuid.New().String(),
-		Level:           level,
-		Title:           title,
-		Message:         message,
-		Timestamp:       time.Now(),
-		ProcessInfo:     make(map[string]string),
-		NetworkInfo:     make(map[string]string),
-		FileInfo:        make(map[string]string),
-		SecurityInfo:    make(map[string]string),
+		ID:               uuid.New().String(),
+		Level:            level,
+		Title:            title,
+		Message:          message,
+		Timestamp:        time.Now(),
+		ProcessInfo:      make(map[string]string),
+		NetworkInfo:      make(map[string]string),
+		FileInfo:         make(map[string]string),
+		SecurityInfo:     make(map[string]string),
 		ContainerContext: make(map[string]string),
 	}
 
