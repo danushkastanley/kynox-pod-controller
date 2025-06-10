@@ -105,6 +105,22 @@ func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, stri
 	// Classify based on event type
 	switch event.GetEventType() {
 	case pb.EventType_EXEC:
+		// Special handling for runc - context-sensitive detection
+		if strings.Contains(command, "runc") {
+			// Check if this is legitimate container runtime usage
+			if strings.Contains(command, "runc:[2:INIT]") ||
+				strings.Contains(command, "runc:[1:CHILD]") {
+				return SeverityLow, "Legitimate container runtime operation"
+			}
+
+			// runc executed in potentially suspicious contexts
+			if isRoot {
+				return SeverityCritical, "Potentially malicious runc execution with root privileges"
+			}
+			return SeverityHigh, "Suspicious runc execution detected"
+		}
+
+		// Handle other suspicious commands
 		if c.isSuspiciousCommand(command) {
 			if isRoot {
 				return SeverityCritical, "Suspicious command execution with root privileges"

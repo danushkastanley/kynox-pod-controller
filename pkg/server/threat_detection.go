@@ -77,9 +77,10 @@ func (td *ThreatDetector) IsSuspiciousCommand(cmd string) bool {
 		"strace", "ltrace", "ptrace",
 		"gdb", "lldb",
 
-		// Container escape tools
+		// Container management tools (only suspicious in certain contexts)
 		"docker", "kubectl", "crictl",
-		"runc", "containerd",
+		"runc", "containerd", // Contextually suspicious - handled in classifier
+		// Note: runc can be involved in container escapes
 
 		// Crypto mining
 		"minerd", "cpuminer", "xmrig",
