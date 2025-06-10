@@ -7,14 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"pod-controller/pkg/alert"
 	"pod-controller/pkg/classifier"
 	pb "pod-controller/pkg/telemetry"
+
+	"github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
-	"golang.org/x/time/rate"
 )
 
 type ConnectedAgent struct {
@@ -27,12 +28,12 @@ type ConnectedAgent struct {
 }
 
 type AlertKey struct {
-	EventType    string
-	Command      string
-	Namespace    string
-	PodName      string
-	ContainerID  string
-	Severity     string
+	EventType   string
+	Command     string
+	Namespace   string
+	PodName     string
+	ContainerID string
+	Severity    string
 }
 
 type AlertAggregation struct {
@@ -44,19 +45,19 @@ type AlertAggregation struct {
 
 type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
-	agents        map[string]*ConnectedAgent
+	agents       map[string]*ConnectedAgent
 	mu           sync.RWMutex
-	classifier    *classifier.EventClassifier
-	alertLimiter  *rate.Limiter
-	alerter       *alert.AlertDispatcher
+	classifier   *classifier.EventClassifier
+	alertLimiter *rate.Limiter
+	alerter      *alert.AlertDispatcher
 	// Metrics
-	eventCounts   map[string]int64
+	eventCounts    map[string]int64
 	severityCounts map[string]int64
 	// Alert aggregation
 	alertAggregation map[AlertKey]*AlertAggregation
-	aggregationMu   sync.RWMutex
-	metricsMu      sync.RWMutex
-	timeout        time.Duration
+	aggregationMu    sync.RWMutex
+	metricsMu        sync.RWMutex
+	timeout          time.Duration
 }
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
@@ -67,14 +68,14 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	}
 
 	return &TelemetryServer{
-		agents:          make(map[string]*ConnectedAgent),
-		classifier:      classifier.NewEventClassifier(),
-		alertLimiter:    rate.NewLimiter(rate.Every(1*time.Second), 1),
-		alerter:         alertDispatcher,
-		eventCounts:     make(map[string]int64),
-		severityCounts:  make(map[string]int64),
+		agents:           make(map[string]*ConnectedAgent),
+		classifier:       classifier.NewEventClassifier(),
+		alertLimiter:     rate.NewLimiter(rate.Every(1*time.Second), 1),
+		alerter:          alertDispatcher,
+		eventCounts:      make(map[string]int64),
+		severityCounts:   make(map[string]int64),
 		alertAggregation: make(map[AlertKey]*AlertAggregation),
-		timeout:         timeout,
+		timeout:          timeout,
 	}
 }
 
@@ -128,18 +129,18 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 		logrus.Printf("❌ Heartbeat failed: unknown agent %s", req.AgentId)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
-			AgentId:     req.AgentId,
+			AgentId:      req.AgentId,
 			ErrorMessage: "agent not registered",
 		}, nil
 	}
 
 	if agent.SessionID != req.SessionId {
 		s.mu.Unlock()
-		logrus.Printf("❌ Heartbeat failed: invalid session for agent %s (got: %s, want: %s)", 
+		logrus.Printf("❌ Heartbeat failed: invalid session for agent %s (got: %s, want: %s)",
 			req.AgentId, req.SessionId, agent.SessionID)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
-			AgentId:     req.AgentId,
+			AgentId:      req.AgentId,
 			ErrorMessage: "invalid session",
 		}, nil
 	}
@@ -150,13 +151,13 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 
 	// Log heartbeat but not too frequently to avoid spam
 	if time.Since(lastSeen) > time.Second*30 {
-		logrus.Printf("💓 Heartbeat from agent %s (node: %s, pod: %s)", 
+		logrus.Printf("💓 Heartbeat from agent %s (node: %s, pod: %s)",
 			agent.AgentID, agent.NodeName, agent.PodName)
 	}
 
 	return &pb.ConnectionStatus{
-		Status:   pb.ConnectionStatus_CONNECTED,
-		AgentId:  req.AgentId,
+		Status:  pb.ConnectionStatus_CONNECTED,
+		AgentId: req.AgentId,
 	}, nil
 }
 
@@ -177,7 +178,7 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 		return status.Error(codes.FailedPrecondition, "agent not connected")
 	}
 
-	logrus.Printf("🔄 Started event stream for agent %s (node: %s, pod: %s)", 
+	logrus.Printf("🔄 Started event stream for agent %s (node: %s, pod: %s)",
 		agent.AgentID, agent.NodeName, agent.PodName)
 
 	// Process the first event
@@ -234,7 +235,7 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 func (s *TelemetryServer) updateMetrics(eventType string, severity classifier.Severity) {
 	s.metricsMu.Lock()
 	defer s.metricsMu.Unlock()
-	
+
 	s.eventCounts[eventType]++
 	s.severityCounts[string(severity)]++
 }
@@ -242,7 +243,7 @@ func (s *TelemetryServer) updateMetrics(eventType string, severity classifier.Se
 func (s *TelemetryServer) GetMetrics() map[string]interface{} {
 	s.metricsMu.RLock()
 	defer s.metricsMu.RUnlock()
-	
+
 	return map[string]interface{}{
 		"event_counts":    s.eventCounts,
 		"severity_counts": s.severityCounts,
@@ -270,9 +271,9 @@ func (s *TelemetryServer) aggregateAlert(key AlertKey, message string) bool {
 		// Update existing aggregation
 		agg.Count++
 		agg.LastSeen = now
-		
+
 		// Send aggregated alert every 10 events or every minute
-		if agg.Count%10 == 0 || now.Sub(agg.LastSeen) >= time.Minute {
+		if agg.Count%10 == 0 || now.Sub(agg.FirstSeen) >= time.Minute {
 			return true
 		}
 		return false
@@ -305,18 +306,18 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	// Initialize fields for logging with clear distinction between agent and target
 	fields := logrus.Fields{
-		"agent_id":     agent.AgentID,
-		"agent_node":   agent.NodeName,
-		"agent_pod":    agent.PodName,
+		"agent_id":         agent.AgentID,
+		"agent_node":       agent.NodeName,
+		"agent_pod":        agent.PodName,
 		"target_namespace": namespace,
-		"target_pod":   podName,
+		"target_pod":       podName,
 		"target_container": containerId,
-		"event_type":   pb.EventType_name[int32(event.EventType)],
-		"command":      event.Command,
-		"pid":          event.Pid,
-		"ppid":         event.Ppid,
-		"uid":          event.Uid,
-		"gid":          event.Gid,
+		"event_type":       pb.EventType_name[int32(event.EventType)],
+		"command":          event.Command,
+		"pid":              event.Pid,
+		"ppid":             event.Ppid,
+		"uid":              event.Uid,
+		"gid":              event.Gid,
 	}
 
 	// Add optional fields if present
@@ -368,7 +369,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	var alertMsg string
 	if podName == agent.PodName {
 		// Event occurred in the monitoring agent itself
-		alertMsg = fmt.Sprintf("%s event detected in monitoring agent %s/%s: %s (%s)", 
+		alertMsg = fmt.Sprintf("%s event detected in monitoring agent %s/%s: %s (%s)",
 			pb.EventType_name[int32(event.EventType)],
 			namespace,
 			podName,
@@ -376,7 +377,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			msg)
 	} else {
 		// Event occurred in a different pod being monitored
-		alertMsg = fmt.Sprintf("%s event detected in pod %s/%s (monitored by %s): %s (%s)", 
+		alertMsg = fmt.Sprintf("%s event detected in pod %s/%s (monitored by %s): %s (%s)",
 			pb.EventType_name[int32(event.EventType)],
 			namespace,
 			podName,
@@ -386,9 +387,21 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	}
 
 	// Check if we should send alert based on aggregation
-	if s.aggregateAlert(alertKey, alertMsg) {
+	shouldAlert := s.aggregateAlert(alertKey, alertMsg)
+	logrus.WithFields(logrus.Fields{
+		"should_alert": shouldAlert,
+		"event_type":   alertKey.EventType,
+		"severity":     alertKey.Severity,
+	}).Debug("🔍 Alert aggregation check")
+
+	if shouldAlert {
 		// Send alert if rate limit allows
-		if s.alertLimiter.Allow() {
+		allowedByRateLimit := s.alertLimiter.Allow()
+		logrus.WithFields(logrus.Fields{
+			"rate_limit_allowed": allowedByRateLimit,
+		}).Debug("🔍 Rate limit check")
+
+		if allowedByRateLimit {
 			// Create container context for alert with both agent and target info
 			alertContainerContext := map[string]string{
 				"monitoring_agent":    agent.PodName,
@@ -400,12 +413,12 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 			if err := s.alerter.Dispatch(&alert.Alert{
 				Level:     s.getAlertLevel(severity),
-				Title:    fmt.Sprintf("%s Security Event", severity),
-				Message:  alertMsg,
-				AgentID:  agent.AgentID,
-				NodeName: agent.NodeName,
-				PodName:  podName,        // Target pod where event occurred
-				Namespace: namespace,     // Target namespace
+				Title:     fmt.Sprintf("%s Security Event", severity),
+				Message:   alertMsg,
+				AgentID:   agent.AgentID,
+				NodeName:  agent.NodeName,
+				PodName:   podName,   // Target pod where event occurred
+				Namespace: namespace, // Target namespace
 				EventType: pb.EventType_name[int32(event.EventType)],
 				Command:   event.Command,
 				ProcessInfo: map[string]string{
@@ -428,7 +441,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 					"message":  msg,
 				},
 				ContainerContext: alertContainerContext,
-				Timestamp: time.Now(),
+				Timestamp:        time.Now(),
 			}); err != nil {
 				logrus.WithError(err).Error("Failed to send alert")
 			}
