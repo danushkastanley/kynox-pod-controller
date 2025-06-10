@@ -75,15 +75,21 @@ func (d *AlertDispatcher) AddNotifier(notifier AlertNotifier) {
 
 // Dispatch sends an alert to all enabled notifiers
 func (d *AlertDispatcher) Dispatch(alert *Alert) error {
+	log.Printf("🔍 Dispatch called with alert: EventType=%s, Level=%s", alert.EventType, alert.Level)
+
 	// Check if we should alert on this event type
 	if !d.config.ShouldAlertOnEvent(alert.EventType) {
+		log.Printf("🚫 Skipping alert - event type %s not configured", alert.EventType)
 		return nil
 	}
+	log.Printf("✅ Event type %s is configured for alerting", alert.EventType)
 
 	// Check if we should alert on this level
 	if !d.config.ShouldAlertOnLevel(alert.Level) {
+		log.Printf("🚫 Skipping alert - level %s not configured", alert.Level)
 		return nil
 	}
+	log.Printf("✅ Alert level %s is configured for alerting", alert.Level)
 
 	// Generate alert ID if not set
 	if alert.ID == "" {
@@ -95,33 +101,46 @@ func (d *AlertDispatcher) Dispatch(alert *Alert) error {
 		alert.Timestamp = time.Now()
 	}
 
+	log.Printf("🔐 Acquiring read lock for notifiers")
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+
+	log.Printf("📢 Found %d notifiers to check", len(d.notifiers))
 
 	var errors []error
 	var wg sync.WaitGroup
 
-	for _, notifier := range d.notifiers {
+	for i, notifier := range d.notifiers {
+		log.Printf("🔍 Checking notifier %d: %s, enabled=%t", i, notifier.Name(), notifier.IsEnabled())
 		if !notifier.IsEnabled() {
+			log.Printf("⏭️  Skipping disabled notifier: %s", notifier.Name())
 			continue
 		}
 
+		log.Printf("📤 Sending alert via %s", notifier.Name())
 		wg.Add(1)
 		go func(n AlertNotifier) {
 			defer wg.Done()
+			log.Printf("🚀 Calling %s.Send()...", n.Name())
 			if err := n.Send(alert); err != nil {
-				log.Printf("Error sending alert via %s: %v", n.Name(), err)
+				log.Printf("❌ Error sending alert via %s: %v", n.Name(), err)
 				errors = append(errors, fmt.Errorf("%s: %v", n.Name(), err))
+			} else {
+				log.Printf("✅ Successfully sent alert via %s", n.Name())
 			}
 		}(notifier)
 	}
 
+	log.Printf("⏳ Waiting for all notifiers to complete...")
 	wg.Wait()
+	log.Printf("✅ All notifiers completed")
 
 	if len(errors) > 0 {
+		log.Printf("❌ Some notifiers failed: %v", errors)
 		return fmt.Errorf("failed to send alerts: %v", errors)
 	}
 
+	log.Printf("🎉 Alert dispatch completed successfully")
 	return nil
 }
 
