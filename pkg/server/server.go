@@ -392,16 +392,21 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		"should_alert": shouldAlert,
 		"event_type":   alertKey.EventType,
 		"severity":     alertKey.Severity,
-	}).Debug("🔍 Alert aggregation check")
+	}).Info("🔍 Alert aggregation check")
 
 	if shouldAlert {
 		// Send alert if rate limit allows
 		allowedByRateLimit := s.alertLimiter.Allow()
 		logrus.WithFields(logrus.Fields{
 			"rate_limit_allowed": allowedByRateLimit,
-		}).Debug("🔍 Rate limit check")
+		}).Info("🔍 Rate limit check")
 
 		if allowedByRateLimit {
+			logrus.WithFields(logrus.Fields{
+				"alert_level": s.getAlertLevel(severity),
+				"title":       fmt.Sprintf("%s Security Event", severity),
+			}).Info("📤 Preparing to send alert...")
+
 			// Create container context for alert with both agent and target info
 			alertContainerContext := map[string]string{
 				"monitoring_agent":    agent.PodName,
