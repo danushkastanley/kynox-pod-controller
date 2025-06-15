@@ -468,16 +468,16 @@ custom_rules:
   development:
     enabled: false
     rules:
-      - reduce_shell_alerts: true
-      - allow_debugging_tools: true
+      reduce_shell_alerts: true
+      allow_debugging_tools: true
       
   # Production environment rules  
   production:
     enabled: true
     rules:
-      - strict_privilege_monitoring: true
-      - zero_tolerance_crypto_mining: true
-      - enhanced_network_monitoring: true
+      strict_privilege_monitoring: true
+      zero_tolerance_crypto_mining: true
+      enhanced_network_monitoring: true
 
 # Notification and response rules
 notifications:
