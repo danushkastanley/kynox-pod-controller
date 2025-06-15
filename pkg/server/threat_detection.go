@@ -31,7 +31,7 @@ type ConnectionTracker struct {
 func NewThreatDetector() *ThreatDetector {
 	return &ThreatDetector{
 		processSpawnCount: make(map[string]*SpawnTracker),
-		networkConnCount: make(map[string]*ConnectionTracker),
+		networkConnCount:  make(map[string]*ConnectionTracker),
 	}
 }
 
@@ -55,35 +55,36 @@ func (td *ThreatDetector) isPrivilegedOperation(event *pb.SecurityEvent) bool {
 }
 
 // isSuspiciousCommand checks for known suspicious commands
-func (td *ThreatDetector) isSuspiciousCommand(cmd string) bool {
+func (td *ThreatDetector) IsSuspiciousCommand(cmd string) bool {
 	suspiciousCommands := []string{
 		// Network tools
 		"nc", "netcat", "ncat", "socat",
 		"wget", "curl", "telnet", "ftp",
-		
+
 		// Shells and interpreters
 		"bash", "sh", "ash", "dash", "zsh",
 		"python", "perl", "ruby", "php", "node",
-		
+
 		// System modification
 		"chmod", "chown", "chattr",
 		"mount", "umount",
-		
+
 		// Network analysis
 		"tcpdump", "wireshark", "tshark",
 		"nmap", "masscan", "netstat",
-		
+
 		// Process inspection
 		"strace", "ltrace", "ptrace",
 		"gdb", "lldb",
-		
-		// Container escape tools
+
+		// Container management tools (only suspicious in certain contexts)
 		"docker", "kubectl", "crictl",
-		"runc", "containerd",
-		
+		"runc", "containerd", // Contextually suspicious - handled in classifier
+		// Note: runc can be involved in container escapes
+
 		// Crypto mining
 		"minerd", "cpuminer", "xmrig",
-		
+
 		// File transfer
 		"scp", "rsync", "sftp",
 	}
@@ -99,7 +100,7 @@ func (td *ThreatDetector) isSuspiciousCommand(cmd string) bool {
 
 // isSuspiciousFileAccess checks if a file access is suspicious based on
 // the path being accessed and any known sensitive files
-func (td *ThreatDetector) isSuspiciousFileAccess(path string) bool {
+func (td *ThreatDetector) IsSuspiciousFileAccess(path string) bool {
 	sensitiveFiles := []string{
 		"/etc/shadow",
 		"/etc/passwd",
@@ -142,12 +143,12 @@ func (td *ThreatDetector) isSuspiciousPtraceOperation(request int64, targetPid i
 	if request == 4 || request == 5 {
 		return true
 	}
-	
+
 	// PTRACE_ATTACH to privileged process
 	if request == 16 && targetPid == 1 {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -170,7 +171,7 @@ func (td *ThreatDetector) isSuspiciousMount(path string) bool {
 }
 
 // isExternalConnection checks if a connection is to an external IP
-func (td *ThreatDetector) isExternalConnection(ip string) bool {
+func (td *ThreatDetector) IsExternalConnection(ip string) bool {
 	if ip == "" {
 		return false
 	}
@@ -273,9 +274,9 @@ func (td *ThreatDetector) detectAnomalousNetworkActivity(event *pb.SecurityEvent
 // isSuspiciousChmod checks if a chmod operation is suspicious based on:
 // 1. The target file being sensitive
 // 2. The permissions being overly permissive (world-writable)
-func (td *ThreatDetector) isSuspiciousChmod(path string, mode uint32) bool {
+func (td *ThreatDetector) IsSuspiciousChmod(path string, mode uint32) bool {
 	// Check if target is a sensitive file
-	if td.isSuspiciousFileAccess(path) {
+	if td.IsSuspiciousFileAccess(path) {
 		return true
 	}
 
@@ -284,12 +285,12 @@ func (td *ThreatDetector) isSuspiciousChmod(path string, mode uint32) bool {
 	if worldWritable {
 		// Get just the permission bits, ignoring special bits
 		perms := mode & 0777
-		
+
 		// Check for especially dangerous combinations:
 		// - World writable and executable (777)
 		// - World writable on sensitive paths
-		if perms == 0777 || strings.HasPrefix(path, "/etc/") || 
-		   strings.HasPrefix(path, "/usr/") || strings.HasPrefix(path, "/bin/") {
+		if perms == 0777 || strings.HasPrefix(path, "/etc/") ||
+			strings.HasPrefix(path, "/usr/") || strings.HasPrefix(path, "/bin/") {
 			return true
 		}
 	}

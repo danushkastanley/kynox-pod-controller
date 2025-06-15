@@ -8,8 +8,8 @@ data:
     PORT=50051
     NODE_NAME=${NODE_NAME}
     POD_NAME=${POD_NAME}
-    LOG_LEVEL=info
-    DEBUG=info  # Set to 'debug' for verbose logging
+    LOG_LEVEL=debug
+    DEBUG=debug  # Set to 'debug' for verbose logging
 
     # Alert Configuration
     # Slack Integration
@@ -20,6 +20,6 @@ data:
     ALERT_WEBHOOK_URL=
 
     # Alert Filtering
-    ALERT_EVENT_TYPES=exec,setuid,mount
-    ALERT_MIN_LEVEL=warning
-    ALERT_RATE_LIMIT=10
+    ALERT_EVENT_TYPES=exec,setuid,mount,open
+    ALERT_MIN_LEVEL=critical
+    ALERT_RATE_LIMIT=1

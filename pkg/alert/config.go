@@ -62,8 +62,10 @@ func (c *Config) ShouldAlertOnEvent(eventType string) bool {
 	if len(c.EventTypes) == 0 {
 		return true
 	}
+	// Convert to lowercase for case-insensitive comparison
+	eventTypeLower := strings.ToLower(eventType)
 	for _, t := range c.EventTypes {
-		if t == eventType {
+		if strings.ToLower(t) == eventTypeLower {
 			return true
 		}
 	}
@@ -76,11 +78,13 @@ func (c *Config) ShouldAlertOnLevel(level AlertLevel) bool {
 	case AlertLevelInfo:
 		return true
 	case AlertLevelWarning:
-		return level == AlertLevelWarning || level == AlertLevelCritical
+		return level == AlertLevelWarning || level == AlertLevelHigh || level == AlertLevelCritical
+	case AlertLevelHigh:
+		return level == AlertLevelHigh || level == AlertLevelCritical
 	case AlertLevelCritical:
 		return level == AlertLevelCritical
 	default:
-		return level == AlertLevelWarning || level == AlertLevelCritical
+		return level == AlertLevelWarning || level == AlertLevelHigh || level == AlertLevelCritical
 	}
 }
 
