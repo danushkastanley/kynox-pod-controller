@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -73,8 +74,13 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	threatDetector := NewThreatDetector()
 
 	// Create advanced YAML-based classifier
+	rulesPath := os.Getenv("RULES_PATH")
+	if rulesPath == "" {
+		rulesPath = "rules/default-rules.yaml" // Default fallback
+	}
+
 	classifierConfig := &ClassifierConfig{
-		RulesPath:       "rules/default-rules.yaml",
+		RulesPath:       rulesPath,
 		EnableHotReload: true,
 		ValidateRules:   true,
 		MetricsEnabled:  true,

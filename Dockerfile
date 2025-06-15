@@ -31,6 +31,7 @@ WORKDIR /app
 COPY --from=builder /app/controller .
 COPY --from=builder /go/bin/grpc_health_probe /usr/local/bin/grpc-health-probe
 COPY --from=builder /app/.env .
+COPY --from=builder /app/rules ./rules/
 
 EXPOSE 50051
 USER nonroot:nonroot
