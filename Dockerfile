@@ -7,6 +7,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 COPY pkg/ pkg/
 COPY cmd/ cmd/
+COPY rules/ rules/
 COPY .env.example .env
 
 # Install protoc, Go plugins, and grpc-health-probe
