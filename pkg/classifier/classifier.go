@@ -33,6 +33,9 @@ type EventClassifier struct {
 	threatDetector ThreatDetectorInterface
 }
 
+// Ensure EventClassifier implements the interface
+var _ EventClassifierInterface = (*EventClassifier)(nil)
+
 // NewEventClassifier creates a new event classifier with default rules
 func NewEventClassifier(threatDetector ThreatDetectorInterface) *EventClassifier {
 	return &EventClassifier{

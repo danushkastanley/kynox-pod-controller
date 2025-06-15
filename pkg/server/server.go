@@ -47,7 +47,7 @@ type TelemetryServer struct {
 	pb.UnimplementedTelemetryServiceServer
 	agents         map[string]*ConnectedAgent
 	mu             sync.RWMutex
-	classifier     *classifier.EventClassifier
+	classifier     classifier.EventClassifierInterface
 	threatDetector *ThreatDetector
 	alertLimiter   *rate.Limiter
 	alerter        *alert.AlertDispatcher
@@ -59,6 +59,7 @@ type TelemetryServer struct {
 	aggregationMu    sync.RWMutex
 	metricsMu        sync.RWMutex
 	timeout          time.Duration
+	startTime        time.Time
 }
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
@@ -71,9 +72,22 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	// Create threat detector
 	threatDetector := NewThreatDetector()
 
+	// Create advanced YAML-based classifier
+	classifierConfig := &ClassifierConfig{
+		RulesPath:       "rules/default-rules.yaml",
+		EnableHotReload: true,
+		ValidateRules:   true,
+		MetricsEnabled:  true,
+	}
+
+	eventClassifier, err := CreateAdvancedClassifier(classifierConfig, threatDetector)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to create advanced classifier")
+	}
+
 	return &TelemetryServer{
 		agents:           make(map[string]*ConnectedAgent),
-		classifier:       classifier.NewEventClassifier(threatDetector),
+		classifier:       eventClassifier,
 		threatDetector:   threatDetector,
 		alertLimiter:     rate.NewLimiter(rate.Every(1*time.Second), 1),
 		alerter:          alertDispatcher,
@@ -81,6 +95,7 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 		severityCounts:   make(map[string]int64),
 		alertAggregation: make(map[AlertKey]*AlertAggregation),
 		timeout:          timeout,
+		startTime:        time.Now(),
 	}
 }
 
