@@ -22,4 +22,4 @@ data:
     # Alert Filtering
     ALERT_EVENT_TYPES=exec,setuid,mount,open
     ALERT_MIN_LEVEL=critical
-    ALERT_RATE_LIMIT=5
+    ALERT_RATE_LIMIT=30

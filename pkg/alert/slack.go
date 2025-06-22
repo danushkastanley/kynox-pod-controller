@@ -82,16 +82,29 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 		return fmt.Errorf("failed to marshal slack message: %v", err)
 	}
 
+	// Check message size (Slack has a 40KB limit)
+	if len(payload) > 35000 { // Leave some buffer
+		logrus.WithField("size_bytes", len(payload)).Warn("⚠️ Slack message too large, truncating")
+		// Create a simplified message
+		msg := s.createSimplifiedSlackMessage(alert)
+		var err error
+		payload, err = json.Marshal(msg)
+		if err != nil {
+			logrus.WithError(err).Error("❌ Failed to marshal simplified Slack message")
+			return fmt.Errorf("failed to marshal simplified slack message: %v", err)
+		}
+	}
+
 	// Send to Slack with retry logic for rate limiting
 	logrus.Debug("📡 Sending message to Slack...")
 
-	maxRetries := 3
+	maxRetries := 5 // Increased retries
 	var lastErr error
 
 	for retry := 0; retry < maxRetries; retry++ {
 		if retry > 0 {
-			// Wait before retrying (exponential backoff)
-			waitTime := time.Duration(retry*retry) * time.Second
+			// More aggressive backoff for Slack rate limits
+			waitTime := time.Duration(5+retry*retry*2) * time.Second
 			logrus.WithField("retry", retry).WithField("wait_seconds", waitTime.Seconds()).Info("⏳ Retrying Slack notification after wait")
 			time.Sleep(waitTime)
 		}
@@ -108,9 +121,9 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 			// Success!
 			break
 		} else if resp.StatusCode == 429 {
-			// Rate limited, retry with backoff
+			// Rate limited, retry with longer backoff
 			lastErr = fmt.Errorf("slack API rate limited (status: %d)", resp.StatusCode)
-			logrus.WithField("status_code", resp.StatusCode).WithField("retry", retry).Warn("⚠️ Slack API rate limited, will retry")
+			logrus.WithField("status_code", resp.StatusCode).WithField("retry", retry).Warn("⚠️ Slack API rate limited, will retry with longer wait")
 			continue
 		} else {
 			// Other error, don't retry
@@ -330,6 +343,69 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 		}
 		contextFields = append(contextFields,
 			slackField{Type: "mrkdwn", Text: "*📊 Classifications:*\n" + strings.Join(classificationDetails, "\n")},
+		)
+	}
+
+	return slackMessage{
+		Channel: s.channel,
+		Blocks: []slackBlock{
+			{
+				Type: "section",
+				Text: &slackText{
+					Type: "mrkdwn",
+					Text: headerText,
+				},
+			},
+			{
+				Type: "section",
+				Text: &slackText{
+					Type: "mrkdwn",
+					Text: alert.Message,
+				},
+			},
+			{
+				Type:   "section",
+				Fields: contextFields,
+			},
+		},
+	}
+}
+
+func (s *SlackNotifier) createSimplifiedSlackMessage(alert *Alert) slackMessage {
+	// Color coding based on alert level
+	var emoji string
+	switch alert.Level {
+	case AlertLevelCritical:
+		emoji = "🚨"
+	case AlertLevelHigh:
+		emoji = "🔴"
+	case AlertLevelWarning:
+		emoji = "⚠️"
+	default:
+		emoji = "ℹ️"
+	}
+
+	// Create simplified header text
+	headerText := fmt.Sprintf("%s *%s Alert:* %s", emoji, alert.Level, alert.Title)
+
+	// Create minimal context fields - only the most important info
+	var contextFields []slackField
+
+	// Add basic information
+	contextFields = append(contextFields,
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Node:* %s", alert.NodeName)},
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Pod:* %s", alert.PodName)},
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Event:* %s", alert.EventType)},
+	)
+
+	// Add command if present (but truncate if too long)
+	if alert.Command != "" {
+		command := alert.Command
+		if len(command) > 100 {
+			command = command[:97] + "..."
+		}
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Command:* `%s`", command)},
 		)
 	}
 
