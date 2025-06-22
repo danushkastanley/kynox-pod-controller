@@ -352,34 +352,67 @@ func (s *SlackNotifier) createSimplifiedSlackMessage(alert *Alert) slackMessage 
 		emoji = "ℹ️"
 	}
 
-	// Create plain text message - much smaller and faster
-	var textParts []string
+	// Create header similar to the screenshot
+	headerText := fmt.Sprintf("%s *%s Alert:* %s", emoji, alert.Level, alert.Title)
 
-	// Header
-	textParts = append(textParts, fmt.Sprintf("%s %s ALERT: %s", emoji, alert.Level, alert.Title))
+	// Create organized context fields like in the screenshot
+	var contextFields []slackField
 
-	// Main message
-	textParts = append(textParts, alert.Message)
+	// Left column - Basic info
+	contextFields = append(contextFields,
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Node:* %s", alert.NodeName)},
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Pod:* %s", alert.PodName)},
+	)
 
-	// Essential context only
-	textParts = append(textParts, fmt.Sprintf("Node: %s | Pod: %s | Event: %s",
-		alert.NodeName, alert.PodName, alert.EventType))
+	// Right column - Event info
+	contextFields = append(contextFields,
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Namespace:* %s", alert.Namespace)},
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Event Type:* %s", alert.EventType)},
+	)
 
-	// Command if present (truncated)
+	// Command info (full width if present)
 	if alert.Command != "" {
 		command := alert.Command
-		if len(command) > 80 {
-			command = command[:77] + "..."
+		if len(command) > 100 {
+			command = command[:97] + "..."
 		}
-		textParts = append(textParts, fmt.Sprintf("Command: %s", command))
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Command:* `%s`", command)},
+		)
 	}
 
-	// Join all parts with newlines
-	plainText := strings.Join(textParts, "\n")
+	// Security context (like in screenshot)
+	if len(alert.SecurityInfo) > 0 {
+		for k, v := range alert.SecurityInfo {
+			if v != "" && k != "message" {
+				contextFields = append(contextFields,
+					slackField{Type: "mrkdwn", Text: fmt.Sprintf("*%s:* %s", strings.Title(k), v)},
+				)
+			}
+		}
+	}
 
-	// Return simple text-only message
 	return slackMessage{
 		Channel: s.channel,
-		Text:    plainText,
+		Blocks: []slackBlock{
+			{
+				Type: "section",
+				Text: &slackText{
+					Type: "mrkdwn",
+					Text: headerText,
+				},
+			},
+			{
+				Type: "section",
+				Text: &slackText{
+					Type: "mrkdwn",
+					Text: alert.Message,
+				},
+			},
+			{
+				Type:   "section",
+				Fields: contextFields,
+			},
+		},
 	}
 }
