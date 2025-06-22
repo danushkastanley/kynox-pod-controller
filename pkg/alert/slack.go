@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -81,18 +82,47 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 		return fmt.Errorf("failed to marshal slack message: %v", err)
 	}
 
-	// Send to Slack
+	// Send to Slack with retry logic for rate limiting
 	logrus.Debug("📡 Sending message to Slack...")
-	resp, err := http.Post(s.webhookURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		logrus.WithError(err).Error("❌ Failed to send Slack message")
-		return fmt.Errorf("failed to send slack message: %v", err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		logrus.WithField("status_code", resp.StatusCode).Error("❌ Slack API returned error")
-		return fmt.Errorf("slack API returned non-200 status: %d", resp.StatusCode)
+	maxRetries := 3
+	var lastErr error
+
+	for retry := 0; retry < maxRetries; retry++ {
+		if retry > 0 {
+			// Wait before retrying (exponential backoff)
+			waitTime := time.Duration(retry*retry) * time.Second
+			logrus.WithField("retry", retry).WithField("wait_seconds", waitTime.Seconds()).Info("⏳ Retrying Slack notification after wait")
+			time.Sleep(waitTime)
+		}
+
+		resp, err := http.Post(s.webhookURL, "application/json", bytes.NewBuffer(payload))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send slack message: %v", err)
+			logrus.WithError(err).WithField("retry", retry).Warn("⚠️ Failed to send Slack message, will retry")
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			// Success!
+			break
+		} else if resp.StatusCode == 429 {
+			// Rate limited, retry with backoff
+			lastErr = fmt.Errorf("slack API rate limited (status: %d)", resp.StatusCode)
+			logrus.WithField("status_code", resp.StatusCode).WithField("retry", retry).Warn("⚠️ Slack API rate limited, will retry")
+			continue
+		} else {
+			// Other error, don't retry
+			lastErr = fmt.Errorf("slack API returned non-200 status: %d", resp.StatusCode)
+			logrus.WithField("status_code", resp.StatusCode).Error("❌ Slack API returned error")
+			return lastErr
+		}
+	}
+
+	if lastErr != nil {
+		logrus.WithError(lastErr).Error("❌ Failed to send Slack message after all retries")
+		return lastErr
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -307,9 +337,9 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 		Channel: s.channel,
 		Blocks: []slackBlock{
 			{
-				Type: "header",
+				Type: "section",
 				Text: &slackText{
-					Type: "plain_text",
+					Type: "mrkdwn",
 					Text: headerText,
 				},
 			},
