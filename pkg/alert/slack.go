@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -72,8 +71,9 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 		"namespace":   alert.Namespace,
 	}).Info("📤 Preparing Slack notification")
 
-	// Create rich Slack message
-	msg := s.createSlackMessage(alert)
+	// Use simplified message to avoid rate limiting issues
+	// TODO: Switch to rich message when enhanced classification is enabled
+	msg := s.createSimplifiedSlackMessage(alert)
 
 	// Convert to JSON
 	payload, err := json.Marshal(msg)
@@ -82,60 +82,26 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 		return fmt.Errorf("failed to marshal slack message: %v", err)
 	}
 
-	// Check message size (Slack has a 40KB limit)
-	if len(payload) > 35000 { // Leave some buffer
-		logrus.WithField("size_bytes", len(payload)).Warn("⚠️ Slack message too large, truncating")
-		// Create a simplified message
-		msg := s.createSimplifiedSlackMessage(alert)
-		var err error
-		payload, err = json.Marshal(msg)
-		if err != nil {
-			logrus.WithError(err).Error("❌ Failed to marshal simplified Slack message")
-			return fmt.Errorf("failed to marshal simplified slack message: %v", err)
-		}
+	// Send to Slack (simplified message should avoid rate limiting)
+	logrus.Debug("📡 Sending simplified message to Slack...")
+
+	resp, err := http.Post(s.webhookURL, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		logrus.WithError(err).Error("❌ Failed to send Slack message")
+		return fmt.Errorf("failed to send slack message: %v", err)
 	}
+	defer resp.Body.Close()
 
-	// Send to Slack with retry logic for rate limiting
-	logrus.Debug("📡 Sending message to Slack...")
-
-	maxRetries := 5 // Increased retries
-	var lastErr error
-
-	for retry := 0; retry < maxRetries; retry++ {
-		if retry > 0 {
-			// More aggressive backoff for Slack rate limits
-			waitTime := time.Duration(5+retry*retry*2) * time.Second
-			logrus.WithField("retry", retry).WithField("wait_seconds", waitTime.Seconds()).Info("⏳ Retrying Slack notification after wait")
-			time.Sleep(waitTime)
-		}
-
-		resp, err := http.Post(s.webhookURL, "application/json", bytes.NewBuffer(payload))
-		if err != nil {
-			lastErr = fmt.Errorf("failed to send slack message: %v", err)
-			logrus.WithError(err).WithField("retry", retry).Warn("⚠️ Failed to send Slack message, will retry")
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			// Success!
-			break
-		} else if resp.StatusCode == 429 {
-			// Rate limited, retry with longer backoff
-			lastErr = fmt.Errorf("slack API rate limited (status: %d)", resp.StatusCode)
-			logrus.WithField("status_code", resp.StatusCode).WithField("retry", retry).Warn("⚠️ Slack API rate limited, will retry with longer wait")
-			continue
-		} else {
-			// Other error, don't retry
-			lastErr = fmt.Errorf("slack API returned non-200 status: %d", resp.StatusCode)
-			logrus.WithField("status_code", resp.StatusCode).Error("❌ Slack API returned error")
-			return lastErr
-		}
-	}
-
-	if lastErr != nil {
-		logrus.WithError(lastErr).Error("❌ Failed to send Slack message after all retries")
-		return lastErr
+	if resp.StatusCode == http.StatusOK {
+		// Success!
+	} else if resp.StatusCode == 429 {
+		// Still rate limited even with simplified message
+		logrus.WithField("status_code", resp.StatusCode).Warn("⚠️ Slack webhook still rate limited with simplified message")
+		return fmt.Errorf("slack webhook rate limited: status %d", resp.StatusCode)
+	} else {
+		// Other error
+		logrus.WithField("status_code", resp.StatusCode).Error("❌ Slack API returned error")
+		return fmt.Errorf("slack API returned non-200 status: %d", resp.StatusCode)
 	}
 
 	logrus.WithFields(logrus.Fields{
