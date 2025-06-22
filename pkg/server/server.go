@@ -10,6 +10,7 @@ import (
 
 	"pod-controller/pkg/alert"
 	"pod-controller/pkg/classifier"
+	"pod-controller/pkg/common"
 	pb "pod-controller/pkg/telemetry"
 
 	"github.com/sirupsen/logrus"
@@ -258,7 +259,7 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 	}
 }
 
-func (s *TelemetryServer) updateMetrics(eventType string, severity classifier.Severity) {
+func (s *TelemetryServer) updateMetrics(eventType string, severity common.Severity) {
 	s.metricsMu.Lock()
 	defer s.metricsMu.Unlock()
 
@@ -366,13 +367,13 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 
 	// Log the event with appropriate level based on severity
 	switch severity {
-	case classifier.SeverityCritical:
+	case common.SeverityCritical:
 		logrus.WithFields(fields).Error("🚨 Critical security event detected")
-	case classifier.SeverityHigh:
+	case common.SeverityHigh:
 		logrus.WithFields(fields).Error("⚠️  High severity security event detected")
-	case classifier.SeverityWarn:
+	case common.SeverityWarn:
 		logrus.WithFields(fields).Warn("⚠️  Medium severity security event detected")
-	case classifier.SeverityLow:
+	case common.SeverityLow:
 		logrus.WithFields(fields).Info("ℹ️  Low severity security event detected")
 	default:
 		logrus.WithFields(fields).Debug("🔍 Security event detected")
@@ -423,7 +424,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	if shouldAlert {
 		// CRITICAL alerts bypass rate limiting for immediate response
 		var allowedByRateLimit bool
-		if severity == classifier.SeverityCritical {
+		if severity == common.SeverityCritical {
 			allowedByRateLimit = true
 			logrus.WithFields(logrus.Fields{
 				"rate_limit_allowed": allowedByRateLimit,
@@ -495,15 +496,15 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	return nil
 }
 
-func (s *TelemetryServer) getAlertLevel(severity classifier.Severity) alert.AlertLevel {
+func (s *TelemetryServer) getAlertLevel(severity common.Severity) alert.AlertLevel {
 	switch severity {
-	case classifier.SeverityCritical:
+	case common.SeverityCritical:
 		return alert.AlertLevelCritical
-	case classifier.SeverityHigh:
+	case common.SeverityHigh:
 		return alert.AlertLevelHigh
-	case classifier.SeverityWarn:
+	case common.SeverityWarn:
 		return alert.AlertLevelWarning
-	case classifier.SeverityLow:
+	case common.SeverityLow:
 		return alert.AlertLevelInfo
 	default:
 		return alert.AlertLevelInfo

@@ -3,17 +3,8 @@ package classifier
 import (
 	"strings"
 
+	"pod-controller/pkg/common"
 	pb "pod-controller/pkg/telemetry"
-)
-
-// Severity levels for security events
-type Severity string
-
-const (
-	SeverityLow      Severity = "LOW"
-	SeverityWarn     Severity = "WARN"
-	SeverityHigh     Severity = "HIGH"
-	SeverityCritical Severity = "CRITICAL"
 )
 
 // ThreatDetectorInterface defines the interface for threat detection
@@ -74,13 +65,13 @@ func NewEventClassifier(threatDetector ThreatDetectorInterface) *EventClassifier
 }
 
 // ClassifyEvent determines the severity of a security event
-func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, string) {
+func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (common.Severity, string) {
 	command := event.GetCommand()
 	isRoot := event.GetUid() == 0
 
 	// Skip alerts for trusted system processes
 	if c.isTrustedProcess(command) {
-		return SeverityLow, "Legitimate system operation"
+		return common.SeverityLow, "Legitimate system operation"
 	}
 
 	// Root-level activities
@@ -89,19 +80,19 @@ func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, stri
 		case pb.EventType_SETUID:
 			// Only alert on non-container-runtime setuid
 			if !c.isTrustedProcess(command) {
-				return SeverityCritical, "Root privilege escalation detected"
+				return common.SeverityCritical, "Root privilege escalation detected"
 			}
-			return SeverityLow, "Legitimate privilege operation"
+			return common.SeverityLow, "Legitimate privilege operation"
 		case pb.EventType_CAPSET:
 			if !c.isTrustedProcess(command) {
-				return SeverityCritical, "Root capability modification detected"
+				return common.SeverityCritical, "Root capability modification detected"
 			}
-			return SeverityLow, "Legitimate capability operation"
+			return common.SeverityLow, "Legitimate capability operation"
 		case pb.EventType_PTRACE:
 			if !c.isTrustedProcess(command) {
-				return SeverityCritical, "Root process debugging attempt detected"
+				return common.SeverityCritical, "Root process debugging attempt detected"
 			}
-			return SeverityLow, "Legitimate debug operation"
+			return common.SeverityLow, "Legitimate debug operation"
 		}
 	}
 
@@ -113,33 +104,33 @@ func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, stri
 			// Check if this is legitimate container runtime usage
 			if strings.Contains(command, "runc:[2:INIT]") ||
 				strings.Contains(command, "runc:[1:CHILD]") {
-				return SeverityLow, "Legitimate container runtime operation"
+				return common.SeverityLow, "Legitimate container runtime operation"
 			}
 
 			// runc executed in potentially suspicious contexts
 			if isRoot {
-				return SeverityCritical, "Potentially malicious runc execution with root privileges"
+				return common.SeverityCritical, "Potentially malicious runc execution with root privileges"
 			}
-			return SeverityHigh, "Suspicious runc execution detected"
+			return common.SeverityHigh, "Suspicious runc execution detected"
 		}
 
 		// Handle other suspicious commands
 		if c.isSuspiciousCommand(command) {
 			if isRoot {
-				return SeverityCritical, "Suspicious command execution with root privileges"
+				return common.SeverityCritical, "Suspicious command execution with root privileges"
 			}
-			return SeverityHigh, "Suspicious command execution detected"
+			return common.SeverityHigh, "Suspicious command execution detected"
 		}
-		return SeverityLow, "Process execution"
+		return common.SeverityLow, "Process execution"
 
 	case pb.EventType_MOUNT:
 		if c.isSensitivePath(event.GetFilePath()) {
 			if !c.isTrustedProcess(command) {
-				return SeverityCritical, "Sensitive filesystem mount detected"
+				return common.SeverityCritical, "Sensitive filesystem mount detected"
 			}
-			return SeverityLow, "Legitimate mount operation"
+			return common.SeverityLow, "Legitimate mount operation"
 		}
-		return SeverityWarn, "Filesystem mount operation"
+		return common.SeverityWarn, "Filesystem mount operation"
 
 	case pb.EventType_OPEN:
 		// Special handling for common monitoring paths
@@ -147,57 +138,57 @@ func (c *EventClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, stri
 
 		// Very common monitoring paths that should be LOW severity for trusted processes
 		if (strings.HasPrefix(filePath, "/proc/") || strings.HasPrefix(filePath, "/sys/")) && c.isTrustedProcess(command) {
-			return SeverityLow, "Legitimate system monitoring"
+			return common.SeverityLow, "Legitimate system monitoring"
 		}
 
 		if c.isSensitivePath(filePath) {
 			if isRoot && !c.isTrustedProcess(command) {
-				return SeverityHigh, "Sensitive file access with root privileges"
+				return common.SeverityHigh, "Sensitive file access with root privileges"
 			}
-			return SeverityWarn, "Sensitive file access detected"
+			return common.SeverityWarn, "Sensitive file access detected"
 		}
-		return SeverityLow, "File access"
+		return common.SeverityLow, "File access"
 
 	case pb.EventType_CONNECT, pb.EventType_BIND:
 		// Check for external connections
 		if c.threatDetector.IsExternalConnection(event.GetDestinationIp()) {
 			if isRoot && !c.isTrustedProcess(command) {
-				return SeverityCritical, "Root process connecting to external IP"
+				return common.SeverityCritical, "Root process connecting to external IP"
 			}
 			if c.isSuspiciousCommand(command) {
-				return SeverityHigh, "Suspicious command connecting to external IP"
+				return common.SeverityHigh, "Suspicious command connecting to external IP"
 			}
-			return SeverityWarn, "External network connection detected"
+			return common.SeverityWarn, "External network connection detected"
 		}
 
 		// Check for suspicious ports
 		if c.isSuspiciousPort(event.GetDestinationPort()) {
 			if isRoot && !c.isTrustedProcess(command) {
-				return SeverityCritical, "Root process accessing sensitive port"
+				return common.SeverityCritical, "Root process accessing sensitive port"
 			}
-			return SeverityHigh, "Process accessing sensitive port"
+			return common.SeverityHigh, "Process accessing sensitive port"
 		}
 
 		// Check for suspicious commands doing network activity
 		if c.isSuspiciousCommand(command) {
 			if isRoot && !c.isTrustedProcess(command) {
-				return SeverityCritical, "Suspicious network activity from root process"
+				return common.SeverityCritical, "Suspicious network activity from root process"
 			}
-			return SeverityHigh, "Suspicious network activity detected"
+			return common.SeverityHigh, "Suspicious network activity detected"
 		}
-		return SeverityLow, "Network connection"
+		return common.SeverityLow, "Network connection"
 
 	case pb.EventType_CHMOD:
 		if c.threatDetector.IsSuspiciousChmod(event.GetFilePath(), event.GetMode()) {
 			if isRoot && !c.isTrustedProcess(command) {
-				return SeverityCritical, "Critical: Suspicious permission modification detected"
+				return common.SeverityCritical, "Critical: Suspicious permission modification detected"
 			}
-			return SeverityHigh, "Suspicious permission modification detected"
+			return common.SeverityHigh, "Suspicious permission modification detected"
 		}
-		return SeverityWarn, "File permission modification"
+		return common.SeverityWarn, "File permission modification"
 
 	default:
-		return SeverityLow, "Unknown event type"
+		return common.SeverityLow, "Unknown event type"
 	}
 }
 

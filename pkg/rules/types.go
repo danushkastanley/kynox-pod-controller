@@ -3,7 +3,7 @@ package rules
 import (
 	"time"
 
-	"pod-controller/pkg/classifier"
+	"pod-controller/pkg/common"
 )
 
 // SecurityRules represents the complete rule configuration
@@ -20,6 +20,12 @@ type SecurityRules struct {
 	Containers    ContainerRules             `yaml:"containers"`
 	CustomRules   CustomRules                `yaml:"custom_rules"`
 	Notifications NotificationRules          `yaml:"notifications"`
+
+	// New classification sections
+	MitreAttack     MitreAttackRules     `yaml:"mitre_attack"`
+	CVEMappings     CVEMappingRules      `yaml:"cve_mappings"`
+	CustomFramework CustomFrameworkRules `yaml:"custom_framework"`
+	ThreatIntel     ThreatIntelRules     `yaml:"threat_intel"`
 }
 
 // RuleMetadata contains metadata about the rules
@@ -272,19 +278,19 @@ func (s SeverityLevel) String() string {
 	}
 }
 
-// ToClassifierSeverity converts to classifier.Severity
-func (s SeverityLevel) ToClassifierSeverity() classifier.Severity {
+// ToCommonSeverity converts to common.Severity
+func (s SeverityLevel) ToCommonSeverity() common.Severity {
 	switch s {
 	case SeverityLow:
-		return classifier.SeverityLow
+		return common.SeverityLow
 	case SeverityWarn:
-		return classifier.SeverityWarn
+		return common.SeverityWarn
 	case SeverityHigh:
-		return classifier.SeverityHigh
+		return common.SeverityHigh
 	case SeverityCritical:
-		return classifier.SeverityCritical
+		return common.SeverityCritical
 	default:
-		return classifier.SeverityLow
+		return common.SeverityLow
 	}
 }
 
@@ -302,4 +308,35 @@ func ParseSeverity(severity string) SeverityLevel {
 	default:
 		return SeverityLow
 	}
+}
+
+// MitreAttackRules contains MITRE ATT&CK classification rules
+type MitreAttackRules struct {
+	Enabled     bool                       `yaml:"enabled"`
+	Version     string                     `yaml:"version"` // MITRE ATT&CK version
+	Techniques  []common.TechniqueMapping  `yaml:"techniques"`
+	Tactics     []common.TacticMapping     `yaml:"tactics"`
+	DataSources []common.DataSourceMapping `yaml:"data_sources"`
+}
+
+// CVEMappingRules contains CVE classification rules
+type CVEMappingRules struct {
+	Enabled      bool                `yaml:"enabled"`
+	AutoUpdate   bool                `yaml:"auto_update"`
+	UpdateSource string              `yaml:"update_source"`
+	Mappings     []common.CVEMapping `yaml:"mappings"`
+}
+
+// CustomFrameworkRules contains custom classification framework rules
+type CustomFrameworkRules struct {
+	Enabled bool                                  `yaml:"enabled"`
+	Rules   map[string]common.CustomFrameworkRule `yaml:"rules"`
+}
+
+// ThreatIntelRules contains threat intelligence rules
+type ThreatIntelRules struct {
+	Enabled        bool                        `yaml:"enabled"`
+	Sources        []common.ThreatIntelSource  `yaml:"sources"`
+	Mappings       []common.ThreatIntelMapping `yaml:"mappings"`
+	UpdateInterval string                      `yaml:"update_interval"`
 }

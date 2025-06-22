@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"pod-controller/pkg/classifier"
+	"pod-controller/pkg/common"
 	pb "pod-controller/pkg/telemetry"
 
 	"github.com/sirupsen/logrus"
@@ -28,10 +28,10 @@ func NewYAMLBasedClassifier(rulesPath string) (*YAMLBasedClassifier, error) {
 }
 
 // ClassifyEvent classifies a security event using YAML rules
-func (c *YAMLBasedClassifier) ClassifyEvent(event *pb.SecurityEvent) (classifier.Severity, string) {
+func (c *YAMLBasedClassifier) ClassifyEvent(event *pb.SecurityEvent) (common.Severity, string) {
 	if c.ruleEngine == nil {
 		logrus.Warn("Rule engine not initialized, using default classification")
-		return classifier.SeverityLow, "Rule engine not available"
+		return common.SeverityLow, "Rule engine not available"
 	}
 
 	return c.ruleEngine.EvaluateEvent(event)
@@ -166,7 +166,7 @@ func (c *YAMLBasedClassifier) matchesContainerPattern(pattern, target, namespace
 }
 
 // GetNotificationRoute returns the notification route for a severity level
-func (c *YAMLBasedClassifier) GetNotificationRoute(severity classifier.Severity) *NotificationRoute {
+func (c *YAMLBasedClassifier) GetNotificationRoute(severity common.Severity) *NotificationRoute {
 	if c.ruleEngine == nil || c.ruleEngine.rules == nil {
 		return nil
 	}
