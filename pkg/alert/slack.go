@@ -19,7 +19,8 @@ type SlackNotifier struct {
 
 type slackMessage struct {
 	Channel string       `json:"channel,omitempty"`
-	Blocks  []slackBlock `json:"blocks"`
+	Text    string       `json:"text,omitempty"`   // For simple text messages
+	Blocks  []slackBlock `json:"blocks,omitempty"` // For rich block messages
 }
 
 type slackBlock struct {
@@ -351,51 +352,34 @@ func (s *SlackNotifier) createSimplifiedSlackMessage(alert *Alert) slackMessage 
 		emoji = "ℹ️"
 	}
 
-	// Create simplified header text
-	headerText := fmt.Sprintf("%s *%s Alert:* %s", emoji, alert.Level, alert.Title)
+	// Create plain text message - much smaller and faster
+	var textParts []string
 
-	// Create minimal context fields - only the most important info
-	var contextFields []slackField
+	// Header
+	textParts = append(textParts, fmt.Sprintf("%s %s ALERT: %s", emoji, alert.Level, alert.Title))
 
-	// Add basic information
-	contextFields = append(contextFields,
-		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Node:* %s", alert.NodeName)},
-		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Pod:* %s", alert.PodName)},
-		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Event:* %s", alert.EventType)},
-	)
+	// Main message
+	textParts = append(textParts, alert.Message)
 
-	// Add command if present (but truncate if too long)
+	// Essential context only
+	textParts = append(textParts, fmt.Sprintf("Node: %s | Pod: %s | Event: %s",
+		alert.NodeName, alert.PodName, alert.EventType))
+
+	// Command if present (truncated)
 	if alert.Command != "" {
 		command := alert.Command
-		if len(command) > 100 {
-			command = command[:97] + "..."
+		if len(command) > 80 {
+			command = command[:77] + "..."
 		}
-		contextFields = append(contextFields,
-			slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Command:* `%s`", command)},
-		)
+		textParts = append(textParts, fmt.Sprintf("Command: %s", command))
 	}
 
+	// Join all parts with newlines
+	plainText := strings.Join(textParts, "\n")
+
+	// Return simple text-only message
 	return slackMessage{
 		Channel: s.channel,
-		Blocks: []slackBlock{
-			{
-				Type: "section",
-				Text: &slackText{
-					Type: "mrkdwn",
-					Text: headerText,
-				},
-			},
-			{
-				Type: "section",
-				Text: &slackText{
-					Type: "mrkdwn",
-					Text: alert.Message,
-				},
-			},
-			{
-				Type:   "section",
-				Fields: contextFields,
-			},
-		},
+		Text:    plainText,
 	}
 }
