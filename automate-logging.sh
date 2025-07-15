@@ -141,8 +141,12 @@ deploy_elasticsearch() {
           --set replicas=1 \
           --set minimumMasterNodes=1 \
           --set volumeClaimTemplate.resources.requests.storage=2Gi \
-          --set xpack.security.enabled=false \
-          --set xpack.security.enrollment.enabled=false \
+          --set clusterHealthCheckParams="wait_for_status=yellow&timeout=1s" \
+          --set esConfig."elasticsearch\.yml"."xpack\.security\.enabled"=false \
+          --set esConfig."elasticsearch\.yml"."xpack\.security\.enrollment\.enabled"=false \
+          --set esConfig."elasticsearch\.yml"."xpack\.security\.http\.ssl\.enabled"=false \
+          --set esConfig."elasticsearch\.yml"."xpack\.security\.transport\.ssl\.enabled"=false \
+          --set createCert=false \
           --wait --timeout=300s
     else
         # Production: Enable security with proper configuration
@@ -175,22 +179,30 @@ deploy_kibana() {
     ENVIRONMENT=${ENVIRONMENT:-development}
     
     if [ "$ENVIRONMENT" = "development" ]; then
-        # Development: No authentication needed
+        # Development: No authentication needed, disable security features
         log_info "Deploying Kibana in development mode"
         helm upgrade --install kibana elastic/kibana \
           --namespace $NAMESPACE \
           --set service.type=NodePort \
           --set elasticsearchHosts="http://elasticsearch-master:9200" \
+          --set kibanaConfig."kibana\.yml"."xpack\.security\.enabled"=false \
+          --set kibanaConfig."kibana\.yml"."xpack\.security\.encryptionKey"="" \
+          --set kibanaConfig."kibana\.yml"."xpack\.encryptedSavedObjects\.encryptionKey"="" \
+          --set createCert=false \
+          --set secretMounts=null \
+          --set keystore=null \
+          --set lifecycle.preStop.exec.command=null \
           --wait --timeout=300s
     else
-        # Production: Use credentials
+        # Production: Use credentials with HTTPS
         log_info "Deploying Kibana with authentication"
         helm upgrade --install kibana elastic/kibana \
           --namespace $NAMESPACE \
           --set service.type=NodePort \
-          --set elasticsearchHosts="http://elasticsearch-master:9200" \
+          --set elasticsearchHosts="https://elasticsearch-master:9200" \
           --set elasticsearchUsername=elastic \
           --set elasticsearchPassword=elastic123 \
+          --set elasticsearchCertificateAuthoritiesFile=/usr/share/kibana/config/certs/ca.crt \
           --wait --timeout=300s
     fi
     
