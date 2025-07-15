@@ -9,8 +9,12 @@
 # - configs/grafana-values.yaml: Dashboards and visualization  
 # - configs/fluent-bit-values.yaml: Log collection and parsing
 #
-# Usage: ./automate-logging.sh
+# Usage: 
+#   ./automate-logging.sh                    # Development mode (no security)
+#   ENVIRONMENT=production ./automate-logging.sh  # Production mode (with security)
+#
 # Access: ./access-monitoring.sh
+# Cleanup: ./cleanup-logging.sh
 
 set -e
 
@@ -125,22 +129,71 @@ setup_helm_repos() {
 # Deploy Elasticsearch
 deploy_elasticsearch() {
     log_info "Deploying Elasticsearch..."
-    helm upgrade --install elasticsearch elastic/elasticsearch \
-      --namespace $NAMESPACE \
-      --set replicas=1 \
-      --set minimumMasterNodes=1 \
-      --set volumeClaimTemplate.resources.requests.storage=2Gi \
-      --wait --timeout=300s
+    
+    # Check if this is development environment
+    ENVIRONMENT=${ENVIRONMENT:-development}
+    
+    if [ "$ENVIRONMENT" = "development" ]; then
+        # Development: Disable security for easier setup
+        log_info "Deploying Elasticsearch in development mode (security disabled)"
+        helm upgrade --install elasticsearch elastic/elasticsearch \
+          --namespace $NAMESPACE \
+          --set replicas=1 \
+          --set minimumMasterNodes=1 \
+          --set volumeClaimTemplate.resources.requests.storage=2Gi \
+          --set xpack.security.enabled=false \
+          --set xpack.security.enrollment.enabled=false \
+          --wait --timeout=300s
+    else
+        # Production: Enable security with proper configuration
+        log_info "Deploying Elasticsearch with security enabled"
+        
+        # Create a secret for Elasticsearch credentials
+        kubectl create secret generic elasticsearch-credentials \
+          --namespace $NAMESPACE \
+          --from-literal=username=elastic \
+          --from-literal=password=elastic123 \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        helm upgrade --install elasticsearch elastic/elasticsearch \
+          --namespace $NAMESPACE \
+          --set replicas=1 \
+          --set minimumMasterNodes=1 \
+          --set volumeClaimTemplate.resources.requests.storage=2Gi \
+          --set secret.enabled=true \
+          --set secret.password=elastic123 \
+          --wait --timeout=300s
+    fi
+    
     log_success "Elasticsearch deployed"
 }
 
 # Deploy Kibana
 deploy_kibana() {
     log_info "Deploying Kibana..."
-    helm upgrade --install kibana elastic/kibana \
-      --namespace $NAMESPACE \
-      --set service.type=NodePort \
-      --wait --timeout=300s
+    
+    ENVIRONMENT=${ENVIRONMENT:-development}
+    
+    if [ "$ENVIRONMENT" = "development" ]; then
+        # Development: No authentication needed
+        log_info "Deploying Kibana in development mode"
+        helm upgrade --install kibana elastic/kibana \
+          --namespace $NAMESPACE \
+          --set service.type=NodePort \
+          --set elasticsearchHosts="http://elasticsearch-master:9200" \
+          --wait --timeout=300s
+    else
+        # Production: Use credentials
+        log_info "Deploying Kibana with authentication"
+        helm upgrade --install kibana elastic/kibana \
+          --namespace $NAMESPACE \
+          --set service.type=NodePort \
+          --set elasticsearchHosts="http://elasticsearch-master:9200" \
+          --set elasticsearchUsername=elastic \
+          --set elasticsearchPassword=elastic123 \
+          --wait --timeout=300s
+    fi
+    
     log_success "Kibana deployed"
 }
 
