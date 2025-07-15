@@ -28,8 +28,8 @@ echo "🗑️ Removing problematic configuration..."
 kubectl delete configmap fluent-bit-config -n logging --ignore-not-found=true
 
 echo "📋 Applying corrected configuration..."
-# Apply the fixed configuration
-kubectl apply -f fluent-bit-opensearch-config-fixed.yaml
+# Apply the fixed configuration from the main file
+kubectl apply -f fluent-bit-opensearch-config.yaml
 
 echo "🔄 Restarting Fluent Bit pods..."
 # Force restart Fluent Bit DaemonSet
