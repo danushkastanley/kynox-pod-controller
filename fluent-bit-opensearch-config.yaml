@@ -82,7 +82,14 @@ data:
         Match         rasp.*
         Operation     lift
         Nested_under  log
-        Add_prefix    event_
+
+    [FILTER]
+        Name          modify
+        Match         rasp.*
+        Copy          severity level_severity
+        Copy          event_type rasp_event_type
+        Copy          agent_id rasp_agent_id
+        Copy          message rasp_message
 
     [OUTPUT]
         Name            opensearch
