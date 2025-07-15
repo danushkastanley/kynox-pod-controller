@@ -1,7 +1,7 @@
 #!/bin/bash
 
-echo "🔧 Fixing Fluent Bit CrashLoopBackOff..."
-echo "======================================="
+echo "🔧 Fixing Fluent Bit 'log is not a map' errors..."
+echo "=============================================="
 
 # Check if kubectl is available
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -27,8 +27,8 @@ echo "🗑️ Removing problematic configuration..."
 # Delete the current ConfigMap (this will cause pods to restart with new config)
 kubectl delete configmap fluent-bit-config -n logging --ignore-not-found=true
 
-echo "📋 Applying corrected configuration..."
-# Apply the fixed configuration from the main file
+echo "📋 Applying corrected configuration with Lua-based JSON parsing..."
+# Apply the fixed configuration with Lua script
 kubectl apply -f fluent-bit-opensearch-config.yaml
 
 echo "🔄 Restarting Fluent Bit pods..."
@@ -56,8 +56,14 @@ kubectl logs -n logging -l k8s-app=fluent-bit-logging --tail=10 2>/dev/null || e
 echo ""
 echo "✅ Fix Applied!"
 echo ""
+echo "🎯 New features:"
+echo "   • Lua-based conditional JSON parsing"
+echo "   • No more 'log is not a map' errors"
+echo "   • Automatic severity field detection"
+echo "   • Enhanced field extraction for RASP events"
+echo ""
 echo "💡 If pods are still starting, wait 1-2 minutes and check:"
 echo "   kubectl get pods -n logging"
 echo "   kubectl logs -n logging -l k8s-app=fluent-bit-logging"
 echo ""
-echo "🎯 Once running, your enhanced log parsing will be active!" 
+echo "🎯 Your severity fields and enhanced log parsing are now active!" 

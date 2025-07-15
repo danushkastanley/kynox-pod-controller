@@ -15,10 +15,6 @@ data:
         HTTP_Listen   0.0.0.0
         HTTP_Port     2020
         Health_Check  On
-        storage.path  /tmp/storage
-        storage.sync  normal
-        storage.checksum off
-        storage.backlog.mem_limit 5M
 
     [INPUT]
         Name              tail
@@ -70,31 +66,10 @@ data:
         Labels              On
 
     [FILTER]
-        Name          parser
+        Name          lua
         Match         rasp.*
-        Key_Name      log
-        Parser        json_parser
-        Reserve_Data  On
-        Preserve_Key  On
-
-    [FILTER]
-        Name          grep
-        Match         rasp.*
-        Regex         log \{.*\}
-
-    [FILTER]
-        Name          nest
-        Match         rasp.*
-        Operation     lift
-        Nested_under  log
-
-    [FILTER]
-        Name          modify
-        Match         rasp.*
-        Copy          severity level_severity
-        Copy          event_type rasp_event_type
-        Copy          agent_id rasp_agent_id
-        Copy          message rasp_message
+        script        /fluent-bit/etc/json_parser.lua
+        call          parse_json_logs
 
     [OUTPUT]
         Name            opensearch
@@ -143,4 +118,49 @@ data:
         Format      json
         Time_Key    timestamp
         Time_Format %Y-%m-%dT%H:%M:%S.%L
-        Time_Keep   On 
+        Time_Keep   On
+
+  json_parser.lua: |
+    function parse_json_logs(tag, timestamp, record)
+        local log = record["log"]
+        
+        if log and type(log) == "string" then
+            -- Check if log starts with '{' (JSON)
+            if string.sub(log, 1, 1) == "{" then
+                local json = require("cjson")
+                local success, parsed = pcall(json.decode, log)
+                
+                if success and type(parsed) == "table" then
+                    -- Successfully parsed JSON - merge fields
+                    for key, value in pairs(parsed) do
+                        record[key] = value
+                    end
+                    
+                    -- Create easily accessible copies of important fields
+                    if parsed.severity then
+                        record["level_severity"] = parsed.severity
+                    end
+                    if parsed.event_type then
+                        record["rasp_event_type"] = parsed.event_type
+                    end
+                    if parsed.agent_id then
+                        record["rasp_agent_id"] = parsed.agent_id
+                    end
+                    if parsed.message then
+                        record["rasp_message"] = parsed.message
+                    end
+                    
+                    -- Keep original log for reference
+                    record["original_log"] = log
+                else
+                    -- Not valid JSON - keep as plain text
+                    record["log_type"] = "plain_text"
+                end
+            else
+                -- Not JSON - keep as plain text
+                record["log_type"] = "plain_text"
+            end
+        end
+        
+        return 1, timestamp, record
+    end 
