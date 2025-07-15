@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -57,16 +59,21 @@ func main() {
 		"pod":  podName,
 	}).Info("Starting RASP controller")
 
-	// Get port from environment or use default
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "50051"
+	// Get ports from environment or use defaults
+	grpcPort := os.Getenv("PORT")
+	if grpcPort == "" {
+		grpcPort = "50051"
 	}
 
-	// Create listener
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	httpPort := os.Getenv("HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "8080"
+	}
+
+	// Create gRPC listener
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", grpcPort))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Fatalf("Failed to listen on gRPC port %s: %v", grpcPort, err)
 	}
 
 	// Create gRPC server
@@ -83,23 +90,74 @@ func main() {
 	// Enable reflection for debugging
 	reflection.Register(grpcServer)
 
-	// Start server in a goroutine
+	// Create HTTP server for metrics API
+	httpMux := http.NewServeMux()
+
+	// Create classifier API and register routes
+	classifierAPI := server.NewClassifierAPI(telemetryServer)
+	classifierAPI.RegisterRoutes(httpMux)
+
+	// Add health check endpoint for HTTP server
+	httpMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status": "healthy", "service": "rasp-controller"}`))
+	})
+
+	// Add metrics endpoint for Prometheus scraping
+	httpMux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		// Redirect to classifier metrics for now
+		http.Redirect(w, r, "/api/v1/classifier/metrics/summary", http.StatusTemporaryRedirect)
+	})
+
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%s", httpPort),
+		Handler: httpMux,
+	}
+
+	// Start gRPC server in a goroutine
 	go func() {
-		log.Printf("Starting gRPC server on port %s", port)
+		logrus.WithField("port", grpcPort).Info("Starting gRPC server")
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			logrus.Fatalf("Failed to serve gRPC: %v", err)
+		}
+	}()
+
+	// Start HTTP server in a goroutine
+	go func() {
+		logrus.WithField("port", httpPort).Info("Starting HTTP metrics server")
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logrus.Fatalf("Failed to serve HTTP: %v", err)
 		}
 	}()
 
 	// Start cleanup goroutine
 	go telemetryServer.CleanupInactiveAgents()
 
+	logrus.Info("RASP Controller started successfully")
+	logrus.WithFields(logrus.Fields{
+		"grpc_port": grpcPort,
+		"http_port": httpPort,
+	}).Info("Server endpoints ready")
+
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("Shutting down gRPC server...")
+	logrus.Info("Shutting down servers...")
+
+	// Create shutdown context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown HTTP server gracefully
+	if err := httpServer.Shutdown(ctx); err != nil {
+		logrus.WithError(err).Error("HTTP server shutdown error")
+	}
+
+	// Shutdown gRPC server gracefully
 	grpcServer.GracefulStop()
-	log.Println("Server stopped")
+
+	logrus.Info("Servers stopped successfully")
 }

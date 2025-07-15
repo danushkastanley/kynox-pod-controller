@@ -11,6 +11,10 @@ spec:
       targetPort: 50051
       protocol: TCP
       name: grpc
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http-metrics
   selector:
     app: rasp-controller
 ---
@@ -43,6 +47,8 @@ spec:
                   fieldPath: metadata.name
             - name: LOG_LEVEL
               value: "info"
+            - name: HTTP_PORT
+              value: "8080"
           volumeMounts:
             - name: config-volume
               mountPath: /app/.env
@@ -50,6 +56,8 @@ spec:
           ports:
             - containerPort: 50051
               name: grpc
+            - containerPort: 8080
+              name: http-metrics
           resources:
             requests:
               cpu: "100m"
@@ -75,12 +83,11 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 1
           readinessProbe:
-            exec:
-              command:
-                - /usr/local/bin/grpc-health-probe
-                - -addr=:50051
-            initialDelaySeconds: 2
-            periodSeconds: 5
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
             timeoutSeconds: 1
       volumes:
         - name: config-volume

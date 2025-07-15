@@ -1,0 +1,371 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "rasp-monitoring",
+    "title": "RASP Security Monitoring Dashboard",
+    "tags": ["rasp", "security", "kubernetes"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "RASP System Overview",
+        "type": "stat",
+        "gridPos": {"h": 3, "w": 24, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "up{job=\"rasp-controller\"}",
+            "legendFormat": "Controller Status",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+              {"options": {"1": {"text": "UP"}}, "type": "value"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Security Events by Type (Last Hour)",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 3},
+        "targets": [
+          {
+            "expr": "increase(rasp_events_total[1h])",
+            "legendFormat": "{{event_type}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "pieType": "pie",
+          "tooltip": {"mode": "single"}
+        }
+      },
+      {
+        "id": 3,
+        "title": "Security Events by Severity (Last Hour)",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 3},
+        "targets": [
+          {
+            "expr": "increase(rasp_events_by_severity[1h])",
+            "legendFormat": "{{severity}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"},
+          "pieType": "pie",
+          "tooltip": {"mode": "single"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic",
+              "fixedColor": "red"
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Security Events Timeline",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 11},
+        "targets": [
+          {
+            "expr": "rate(rasp_events_total[5m]) * 60",
+            "legendFormat": "{{event_type}} events/min",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {"displayMode": "table", "placement": "bottom"},
+          "tooltip": {"mode": "multi"}
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "spanNulls": false,
+              "showPoints": "never",
+              "pointSize": 5
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Agent Connections",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 19},
+        "targets": [
+          {
+            "expr": "rasp_active_agents",
+            "legendFormat": "Active Agents",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 1},
+                {"color": "green", "value": 5}
+              ]
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Events Per Second",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 19},
+        "targets": [
+          {
+            "expr": "rate(rasp_events_total[5m])",
+            "legendFormat": "Events/sec",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 10},
+                {"color": "red", "value": 100}
+              ]
+            },
+            "unit": "reqps"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Classification Performance",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 19},
+        "targets": [
+          {
+            "expr": "rasp_avg_classification_time_ms",
+            "legendFormat": "Avg Response Time",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 50},
+                {"color": "red", "value": 100}
+              ]
+            },
+            "unit": "ms"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Error Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 19},
+        "targets": [
+          {
+            "expr": "rasp_error_rate_percent",
+            "legendFormat": "Error Rate",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 5}
+              ]
+            },
+            "unit": "percent"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Critical Security Events",
+        "type": "table",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 23},
+        "targets": [
+          {
+            "expr": "increase(rasp_events_total{severity=\"CRITICAL\"}[1h])",
+            "legendFormat": "{{event_type}}",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"Time": true},
+              "indexByName": {},
+              "renameByName": {
+                "event_type": "Event Type",
+                "Value": "Count (Last Hour)"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Top Security Events by Pod",
+        "type": "table",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 23},
+        "targets": [
+          {
+            "expr": "topk(10, increase(rasp_events_total[1h]))",
+            "legendFormat": "{{pod_name}} - {{event_type}}",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"Time": true},
+              "indexByName": {},
+              "renameByName": {
+                "pod_name": "Pod Name",
+                "event_type": "Event Type",
+                "Value": "Count"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "System Health Metrics",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 24, "x": 0, "y": 29},
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total{pod=~\"rasp.*\"}[5m]) * 100",
+            "legendFormat": "{{pod}} CPU %",
+            "refId": "A"
+          },
+          {
+            "expr": "container_memory_usage_bytes{pod=~\"rasp.*\"} / 1024 / 1024",
+            "legendFormat": "{{pod}} Memory MB",
+            "refId": "B"
+          }
+        ],
+        "options": {
+          "legend": {"displayMode": "table", "placement": "bottom"},
+          "tooltip": {"mode": "multi"}
+        },
+        "yAxes": [
+          {
+            "label": "Percentage / MB",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Event Processing Pipeline",
+        "type": "flowchart",
+        "gridPos": {"h": 6, "w": 24, "x": 0, "y": 35},
+        "targets": [
+          {
+            "expr": "rasp_events_processed_total",
+            "legendFormat": "Events Processed",
+            "refId": "A"
+          },
+          {
+            "expr": "rasp_events_filtered_total",
+            "legendFormat": "Events Filtered",
+            "refId": "B"
+          },
+          {
+            "expr": "rasp_alerts_sent_total",
+            "legendFormat": "Alerts Sent",
+            "refId": "C"
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "namespace",
+          "type": "query",
+          "query": "label_values(rasp_events_total, namespace)",
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          "options": [],
+          "includeAll": true,
+          "multi": true
+        },
+        {
+          "name": "severity",
+          "type": "query",
+          "query": "label_values(rasp_events_total, severity)",
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          "options": [],
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Security Incidents",
+          "datasource": "Prometheus",
+          "expr": "changes(rasp_events_total{severity=\"CRITICAL\"}[5m]) > 0",
+          "titleFormat": "Critical Security Event",
+          "textFormat": "{{event_type}} detected",
+          "iconColor": "red"
+        }
+      ]
+    }
+  }
+} 
