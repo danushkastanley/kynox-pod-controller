@@ -1,7 +1,7 @@
 #!/bin/bash
 
-echo "🔧 Fixing Fluent Bit 'log is not a map' errors..."
-echo "=============================================="
+echo "🔧 Fixing Fluent Bit DNS and connection issues..."
+echo "==============================================="
 
 # Check if kubectl is available
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -16,6 +16,15 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
 fi
 
 echo "✅ Connected to Kubernetes cluster"
+
+# Check OpenSearch connectivity
+echo "📡 Testing OpenSearch connectivity..."
+if kubectl get service opensearch -n logging >/dev/null 2>&1; then
+    echo "✅ OpenSearch service found: opensearch.logging.svc.cluster.local"
+else
+    echo "❌ OpenSearch service not found! Please deploy OpenSearch first."
+    exit 1
+fi
 
 # Check current Fluent Bit status
 echo "📊 Current Fluent Bit Status:"

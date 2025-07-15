@@ -74,7 +74,7 @@ data:
     [OUTPUT]
         Name            opensearch
         Match           rasp.*
-        Host            opensearch-cluster-master.logging.svc.cluster.local
+        Host            opensearch.logging.svc.cluster.local
         Port            9200
         Index           rasp
         tls             Off
@@ -91,7 +91,7 @@ data:
     [OUTPUT]
         Name            opensearch
         Match           kubernetes.*
-        Host            opensearch-cluster-master.logging.svc.cluster.local
+        Host            opensearch.logging.svc.cluster.local
         Port            9200
         Index           kubernetes
         tls             Off
