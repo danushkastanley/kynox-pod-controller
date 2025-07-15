@@ -78,6 +78,11 @@ data:
         Preserve_Key  On
 
     [FILTER]
+        Name          grep
+        Match         rasp.*
+        Regex         log \{.*\}
+
+    [FILTER]
         Name          nest
         Match         rasp.*
         Operation     lift
@@ -105,6 +110,8 @@ data:
         Logstash_DateFormat %Y.%m.%d
         Include_Tag_Key On
         Tag_Key         source_tag
+        Retry_Limit     3
+        workers         1
         
     [OUTPUT]
         Name            opensearch
@@ -120,6 +127,8 @@ data:
         Logstash_DateFormat %Y.%m.%d
         Include_Tag_Key On
         Tag_Key         source_tag
+        Retry_Limit     3
+        workers         1
 
   parsers.conf: |
     [PARSER]
