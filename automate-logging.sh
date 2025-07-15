@@ -145,7 +145,9 @@ deploy_elasticsearch() {
           --set-string esConfig."elasticsearch\.yml"="xpack.security.enabled: false
 xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
-xpack.security.transport.ssl.enabled: false" \
+xpack.security.transport.ssl.enabled: false
+discovery.type: single-node
+cluster.initial_master_nodes: []" \
           --set createCert=false \
           --wait --timeout=300s
     else
