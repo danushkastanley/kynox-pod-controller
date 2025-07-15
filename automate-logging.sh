@@ -142,10 +142,10 @@ deploy_elasticsearch() {
           --set minimumMasterNodes=1 \
           --set volumeClaimTemplate.resources.requests.storage=2Gi \
           --set clusterHealthCheckParams="wait_for_status=yellow&timeout=1s" \
-          --set esConfig."elasticsearch\.yml"."xpack\.security\.enabled"=false \
-          --set esConfig."elasticsearch\.yml"."xpack\.security\.enrollment\.enabled"=false \
-          --set esConfig."elasticsearch\.yml"."xpack\.security\.http\.ssl\.enabled"=false \
-          --set esConfig."elasticsearch\.yml"."xpack\.security\.transport\.ssl\.enabled"=false \
+          --set-string esConfig."elasticsearch\.yml"="xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false" \
           --set createCert=false \
           --wait --timeout=300s
     else
