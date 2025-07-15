@@ -134,43 +134,20 @@ deploy_elasticsearch() {
     ENVIRONMENT=${ENVIRONMENT:-development}
     
     if [ "$ENVIRONMENT" = "development" ]; then
-        # Development: Disable security for easier setup
-        log_info "Deploying Elasticsearch in development mode (security disabled)"
+        # Development: Use the simplest possible configuration
+        log_info "Deploying Elasticsearch in development mode (minimal config)"
         
-        # Create temporary values file for development
-        cat > /tmp/elasticsearch-dev-values.yaml <<EOF
-replicas: 1
-minimumMasterNodes: 1
-antiAffinity: "soft"
-esJavaOpts: "-Xmx512m -Xms512m"
-volumeClaimTemplate:
-  resources:
-    requests:
-      storage: 2Gi
-createCert: false
-protocol: http
-httpPort: 9200
-transportPort: 9300
-service:
-  type: ClusterIP
-clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
-esConfig:
-  elasticsearch.yml: |
-    xpack.security.enabled: false
-    xpack.security.enrollment.enabled: false
-    xpack.security.http.ssl.enabled: false
-    xpack.security.transport.ssl.enabled: false
-    discovery.type: single-node
-    network.host: 0.0.0.0
-EOF
-        
+        # Try the absolute simplest configuration first
         helm upgrade --install elasticsearch elastic/elasticsearch \
           --namespace $NAMESPACE \
-          --values /tmp/elasticsearch-dev-values.yaml \
+          --set replicas=1 \
+          --set minimumMasterNodes=1 \
+          --set volumeClaimTemplate.resources.requests.storage=1Gi \
+          --set antiAffinity="soft" \
+          --set esJavaOpts="-Xmx256m -Xms256m" \
           --wait --timeout=300s
           
-        # Clean up temp file
-        rm -f /tmp/elasticsearch-dev-values.yaml
+        # If the basic deployment works, we can add security configs later
     else
         # Production: Enable security with proper configuration
         log_info "Deploying Elasticsearch with security enabled"
