@@ -137,7 +137,7 @@ deploy_elasticsearch() {
         # Development: Use the simplest possible configuration
         log_info "Deploying Elasticsearch in development mode (minimal config)"
         
-        # Try the absolute simplest configuration first
+        # Deploy basic Elasticsearch first
         helm upgrade --install elasticsearch elastic/elasticsearch \
           --namespace $NAMESPACE \
           --set replicas=1 \
@@ -147,7 +147,13 @@ deploy_elasticsearch() {
           --set esJavaOpts="-Xmx256m -Xms256m" \
           --wait --timeout=300s
           
-        # If the basic deployment works, we can add security configs later
+        # Now add single-node configuration to stop discovery warnings
+        log_info "Adding single-node configuration to stop discovery warnings..."
+        helm upgrade elasticsearch elastic/elasticsearch \
+          --namespace $NAMESPACE \
+          --reuse-values \
+          --set-string esConfig."elasticsearch\.yml"="discovery.type: single-node" \
+          --wait --timeout=120s
     else
         # Production: Enable security with proper configuration
         log_info "Deploying Elasticsearch with security enabled"
@@ -179,19 +185,12 @@ deploy_kibana() {
     ENVIRONMENT=${ENVIRONMENT:-development}
     
     if [ "$ENVIRONMENT" = "development" ]; then
-        # Development: No authentication needed, disable security features
+        # Development: Simple Kibana configuration
         log_info "Deploying Kibana in development mode"
         helm upgrade --install kibana elastic/kibana \
           --namespace $NAMESPACE \
           --set service.type=NodePort \
           --set elasticsearchHosts="http://elasticsearch-master:9200" \
-          --set kibanaConfig."kibana\.yml"."xpack\.security\.enabled"=false \
-          --set kibanaConfig."kibana\.yml"."xpack\.security\.encryptionKey"="" \
-          --set kibanaConfig."kibana\.yml"."xpack\.encryptedSavedObjects\.encryptionKey"="" \
-          --set createCert=false \
-          --set secretMounts=null \
-          --set keystore=null \
-          --set lifecycle.preStop.exec.command=null \
           --wait --timeout=300s
     else
         # Production: Use credentials with HTTPS
