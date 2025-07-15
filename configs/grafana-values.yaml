@@ -1,0 +1,234 @@
+adminUser: admin
+adminPassword: admin
+
+# Service configuration
+service:
+  type: NodePort
+  port: 80
+
+# Persistence
+persistence:
+  enabled: false
+  # For production, enable persistent storage:
+  # enabled: true
+  # size: 10Gi
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Data sources configuration
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.logging.svc.cluster.local:80
+        access: proxy
+        isDefault: true
+        editable: true
+        jsonData:
+          httpMethod: POST
+          manageAlerts: true
+          prometheusType: Prometheus
+          prometheusVersion: 2.40.0
+          cacheLevel: 'High'
+          disableRecordingRules: false
+          incrementalQueryOverlapWindow: 10m
+
+      - name: Elasticsearch
+        type: elasticsearch
+        url: http://elasticsearch-master.logging.svc.cluster.local:9200
+        access: proxy
+        database: "logstash-*"
+        editable: true
+        jsonData:
+          interval: Daily
+          timeField: "@timestamp"
+          esVersion: "7.10.0"
+          logMessageField: message
+          logLevelField: level
+
+# Dashboard providers
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: 'rasp-dashboards'
+        orgId: 1
+        folder: 'RASP Security'
+        type: file
+        disableDeletion: false
+        editable: true
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards/rasp
+
+      - name: 'kubernetes-dashboards'
+        orgId: 1
+        folder: 'Kubernetes'
+        type: file
+        disableDeletion: false
+        editable: true
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards/kubernetes
+
+# Dashboard configurations
+dashboards:
+  rasp:
+    rasp-security-overview:
+      gnetId: null
+      revision: 1
+      datasource: Prometheus
+      json: |
+        {
+          "dashboard": {
+            "id": null,
+            "uid": "rasp-security-overview",
+            "title": "RASP Security Overview",
+            "tags": ["rasp", "security", "monitoring"],
+            "timezone": "browser",
+            "refresh": "30s",
+            "time": {
+              "from": "now-1h",
+              "to": "now"
+            },
+            "panels": [
+              {
+                "id": 1,
+                "title": "RASP System Status",
+                "type": "stat",
+                "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+                "targets": [
+                  {
+                    "expr": "up{job=\"rasp-controller\"}",
+                    "legendFormat": "Controller Status",
+                    "refId": "A"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "thresholds": {
+                      "steps": [
+                        {"color": "red", "value": 0},
+                        {"color": "green", "value": 1}
+                      ]
+                    },
+                    "mappings": [
+                      {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                      {"options": {"1": {"text": "UP"}}, "type": "value"}
+                    ]
+                  }
+                }
+              },
+              {
+                "id": 2,
+                "title": "Events per Second",
+                "type": "graph",
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+                "targets": [
+                  {
+                    "expr": "rate(rasp_events_total[5m])",
+                    "legendFormat": "{{ event_type }}",
+                    "refId": "A"
+                  }
+                ],
+                "yAxes": [
+                  {"label": "Events/sec", "show": true},
+                  {"show": false}
+                ]
+              },
+              {
+                "id": 3,
+                "title": "Threat Detection Rate",
+                "type": "graph",
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+                "targets": [
+                  {
+                    "expr": "rate(rasp_threats_detected_total[5m])",
+                    "legendFormat": "{{ severity }}",
+                    "refId": "A"
+                  }
+                ],
+                "yAxes": [
+                  {"label": "Threats/sec", "show": true},
+                  {"show": false}
+                ]
+              }
+            ]
+          }
+        }
+
+  kubernetes:
+    k8s-cluster-overview:
+      gnetId: 7249
+      revision: 1
+      datasource: Prometheus
+
+# Grafana configuration
+grafana.ini:
+  analytics:
+    check_for_updates: true
+  log:
+    mode: console
+  grafana_net:
+    url: https://grafana.net
+  server:
+    domain: localhost
+    root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+  security:
+    admin_user: admin
+    admin_password: admin
+    # For production, use secret management:
+    # admin_password: $__file{/etc/secrets/admin_password}
+  users:
+    allow_sign_up: false
+    auto_assign_org: true
+    auto_assign_org_role: Viewer
+  auth.anonymous:
+    enabled: false
+
+# Plugins to install
+plugins:
+  - grafana-piechart-panel
+  - grafana-worldmap-panel
+  - grafana-clock-panel
+
+# Sidecar configuration for automatic dashboard loading
+sidecar:
+  enabled: true
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    folder: /tmp/dashboards
+    defaultFolderName: "General"
+    searchNamespace: ALL
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    labelValue: "1"
+
+# ImageRenderer (for PDF/PNG exports)
+imageRenderer:
+  enabled: false
+
+# SMTP configuration (for alerting)
+smtp:
+  enabled: false
+  # host: localhost:587
+  # user: ""
+  # password: ""
+  # from_address: admin@grafana.localhost
+
+# LDAP configuration (for enterprise authentication)
+ldap:
+  enabled: false 

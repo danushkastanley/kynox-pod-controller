@@ -1,11 +1,25 @@
 #!/bin/bash
 
+# RASP Monitoring Stack Deployment Script
+# This script deploys a comprehensive observability stack for RASP monitoring
+# using external configuration files for maintainability and customization.
+#
+# Configuration files (see configs/README.md for details):
+# - configs/prometheus-values.yaml: Metrics collection and alerting
+# - configs/grafana-values.yaml: Dashboards and visualization  
+# - configs/fluent-bit-values.yaml: Log collection and parsing
+#
+# Usage: ./automate-logging.sh
+# Access: ./access-monitoring.sh
+
 set -e
 
 # Configuration
 NAMESPACE=logging
 RASP_NAMESPACE=default  # Namespace where RASP controller is deployed
 RASP_SERVICE=rasp-controller
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="$SCRIPT_DIR/configs"
 
 # Colors for output
 RED='\033[0;31m'
@@ -52,6 +66,44 @@ check_rasp_controller() {
     fi
 }
 
+# Check configuration files
+check_config_files() {
+    log_info "Checking configuration files..."
+    
+    if [ ! -d "$CONFIG_DIR" ]; then
+        log_error "Configuration directory not found: $CONFIG_DIR"
+        log_info "Please ensure you're running this script from the pod-controller directory"
+        exit 1
+    fi
+    
+    local missing_files=()
+    local config_files=("prometheus-values.yaml" "grafana-values.yaml" "fluent-bit-values.yaml")
+    
+    for file in "${config_files[@]}"; do
+        if [ ! -f "$CONFIG_DIR/$file" ]; then
+            missing_files+=("$file")
+        fi
+    done
+    
+    if [ ${#missing_files[@]} -gt 0 ]; then
+        log_error "Missing configuration files:"
+        for file in "${missing_files[@]}"; do
+            echo "  ❌ $CONFIG_DIR/$file"
+        done
+        echo ""
+        log_info "📚 Please check the configs/README.md for configuration details"
+        exit 1
+    fi
+    
+    log_success "All configuration files found in $CONFIG_DIR"
+    log_info "📝 You can customize configurations in:"
+    echo "   • $CONFIG_DIR/prometheus-values.yaml (metrics collection)"
+    echo "   • $CONFIG_DIR/grafana-values.yaml (dashboards)"
+    echo "   • $CONFIG_DIR/fluent-bit-values.yaml (log collection)"
+    echo "   📖 See $CONFIG_DIR/README.md for customization guide"
+    echo ""
+}
+
 # Create namespace
 create_namespace() {
     log_info "Creating namespace: $NAMESPACE"
@@ -96,88 +148,18 @@ deploy_kibana() {
 deploy_fluentbit() {
     log_info "Deploying Fluent Bit with RASP log parsing..."
     
-    # Create enhanced Fluent Bit configuration
-    cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fluent-bit-config
-  namespace: $NAMESPACE
-data:
-  fluent-bit.conf: |
-    [SERVICE]
-        Flush         1
-        Log_Level     info
-        Daemon        off
-        Parsers_File  parsers.conf
-        HTTP_Server   On
-        HTTP_Listen   0.0.0.0
-        HTTP_Port     2020
-
-    [INPUT]
-        Name              tail
-        Path              /var/log/containers/*rasp*.log
-        Parser            docker
-        Tag               rasp.*
-        Refresh_Interval  5
-        DB                /var/log/flb_rasp.db
-
-    [INPUT]
-        Name              tail
-        Path              /var/log/containers/*.log
-        Exclude_Path      /var/log/containers/*rasp*.log
-        Parser            docker
-        Tag               kube.*
-        Refresh_Interval  5
-        DB                /var/log/flb_kube.db
-
-    [FILTER]
-        Name                kubernetes
-        Match               *
-        Kube_URL            https://kubernetes.default.svc:443
-        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
-        Kube_Tag_Prefix     kube.var.log.containers.
-        Merge_Log           On
-        Keep_Log            Off
-        K8S-Logging.Parser  On
-        K8S-Logging.Exclude On
-
-    [FILTER]
-        Name                parser
-        Match               rasp.*
-        Key_Name            log
-        Parser              rasp_json
-        Reserve_Data        On
-
-    [OUTPUT]
-        Name              es
-        Match             *
-        Host              elasticsearch-master.${NAMESPACE}.svc.cluster.local
-        Port              9200
-        Index             logs
-        Type              _doc
-
-  parsers.conf: |
-    [PARSER]
-        Name        docker
-        Format      json
-        Time_Key    time
-        Time_Format %Y-%m-%dT%H:%M:%S.%L
-        Time_Keep   On
-
-    [PARSER]
-        Name        rasp_json
-        Format      json
-        Time_Key    timestamp
-        Time_Format %Y-%m-%dT%H:%M:%S.%L
-        Time_Keep   On
-EOF
+    # Check if config file exists
+    if [ ! -f "$CONFIG_DIR/fluent-bit-values.yaml" ]; then
+        log_error "Fluent Bit configuration file not found: $CONFIG_DIR/fluent-bit-values.yaml"
+        return 1
+    fi
     
+    log_info "Using Fluent Bit configuration from: $CONFIG_DIR/fluent-bit-values.yaml"
+    
+    # Deploy Fluent Bit with values file
     helm upgrade --install fluent-bit fluent/fluent-bit \
       --namespace $NAMESPACE \
-      --set-file config.fluentBitConfig=<(kubectl get configmap fluent-bit-config -n $NAMESPACE -o jsonpath='{.data.fluent-bit\.conf}') \
-      --set-file config.parsersConfig=<(kubectl get configmap fluent-bit-config -n $NAMESPACE -o jsonpath='{.data.parsers\.conf}') \
+      --values "$CONFIG_DIR/fluent-bit-values.yaml" \
       --wait --timeout=300s
       
     log_success "Fluent Bit deployed with RASP log parsing"
@@ -187,76 +169,18 @@ EOF
 deploy_prometheus() {
     log_info "Deploying Prometheus with RASP controller monitoring..."
     
-    # Create Prometheus configuration for RASP monitoring
-    cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: prometheus-rasp-config
-  namespace: $NAMESPACE
-data:
-  prometheus.yml: |
-    global:
-      scrape_interval: 15s
-      evaluation_interval: 15s
-
-    scrape_configs:
-      # Default Kubernetes scraping
-      - job_name: 'kubernetes-pods'
-        kubernetes_sd_configs:
-          - role: pod
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
-            action: keep
-            regex: true
-          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
-            action: replace
-            target_label: __metrics_path__
-            regex: (.+)
-          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
-            action: replace
-            regex: ([^:]+)(?::\d+)?;(\d+)
-            replacement: \$1:\$2
-            target_label: __address__
-
-      # RASP Controller metrics
-      - job_name: 'rasp-controller'
-        static_configs:
-          - targets: ['${RASP_SERVICE}.${RASP_NAMESPACE}.svc.cluster.local:8080']
-        metrics_path: '/api/v1/classifier/metrics/summary'
-        scrape_interval: 30s
-        scrape_timeout: 10s
-
-      # Kubernetes API server
-      - job_name: 'kubernetes-apiservers'
-        kubernetes_sd_configs:
-          - role: endpoints
-        scheme: https
-        tls_config:
-          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
-            action: keep
-            regex: default;kubernetes;https
-
-      # Node metrics
-      - job_name: 'kubernetes-nodes'
-        kubernetes_sd_configs:
-          - role: node
-        scheme: https
-        tls_config:
-          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-        relabel_configs:
-          - action: labelmap
-            regex: __meta_kubernetes_node_label_(.+)
-EOF
-
+    # Check if config file exists
+    if [ ! -f "$CONFIG_DIR/prometheus-values.yaml" ]; then
+        log_error "Prometheus configuration file not found: $CONFIG_DIR/prometheus-values.yaml"
+        return 1
+    fi
+    
+    log_info "Using Prometheus configuration from: $CONFIG_DIR/prometheus-values.yaml"
+    
+    # Deploy Prometheus with values file
     helm upgrade --install prometheus prometheus-community/prometheus \
       --namespace $NAMESPACE \
-      --set-file serverFiles."prometheus\.yml"=<(kubectl get configmap prometheus-rasp-config -n $NAMESPACE -o jsonpath='{.data.prometheus\.yml}') \
-      --set server.service.type=NodePort \
+      --values "$CONFIG_DIR/prometheus-values.yaml" \
       --wait --timeout=300s
       
     log_success "Prometheus deployed with RASP monitoring"
@@ -266,7 +190,15 @@ EOF
 deploy_grafana() {
     log_info "Deploying Grafana with RASP dashboards..."
     
-    # Create Grafana dashboard for RASP monitoring
+    # Check if config file exists
+    if [ ! -f "$CONFIG_DIR/grafana-values.yaml" ]; then
+        log_error "Grafana configuration file not found: $CONFIG_DIR/grafana-values.yaml"
+        return 1
+    fi
+    
+    log_info "Using Grafana configuration from: $CONFIG_DIR/grafana-values.yaml"
+    
+    # Create additional Grafana dashboard ConfigMap for RASP monitoring
     cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ConfigMap
@@ -339,12 +271,10 @@ data:
     }
 EOF
 
+    # Deploy Grafana with values file
     helm upgrade --install grafana grafana/grafana \
       --namespace $NAMESPACE \
-      --set adminPassword='admin' \
-      --set service.type=NodePort \
-      --set sidecar.dashboards.enabled=true \
-      --set sidecar.dashboards.label=grafana_dashboard \
+      --values "$CONFIG_DIR/grafana-values.yaml" \
       --wait --timeout=300s
       
     log_success "Grafana deployed with RASP dashboards"
@@ -392,8 +322,17 @@ verify_deployment() {
     echo "➡️  Prometheus: http://$NODE_IP:$PROMETHEUS_PORT"
     echo ""
     echo "RASP Monitoring Endpoints:"
-    echo "➡️  Controller Health: http://$NODE_IP:$GRAFANA_PORT (via port-forward)"
-    echo "➡️  Controller Metrics: http://$NODE_IP:$GRAFANA_PORT (via port-forward)"
+    echo "➡️  Controller Health: http://rasp-controller.default.svc.cluster.local:8080/health"
+    echo "➡️  Controller Metrics: http://rasp-controller.default.svc.cluster.local:8080/api/v1/classifier/metrics"
+    echo ""
+    echo "🚀 Use the access helper script for easy dashboard access:"
+    echo "  ./access-monitoring.sh"
+    echo ""
+    echo "📝 Configuration files used:"
+    echo "  • configs/prometheus-values.yaml (metrics collection)"
+    echo "  • configs/grafana-values.yaml (dashboards & visualization)"
+    echo "  • configs/fluent-bit-values.yaml (log aggregation)"
+    echo "  📖 See configs/README.md for customization guide"
     echo ""
     echo "To access services locally, use port-forwarding:"
     echo "  kubectl port-forward -n $NAMESPACE svc/kibana-kibana 5601:5601"
@@ -403,9 +342,11 @@ verify_deployment() {
 
 # Main execution
 main() {
-    log_info "Starting RASP observability stack deployment..."
+    log_info "🚀 Starting RASP observability stack deployment..."
+    echo ""
     
     check_rasp_controller
+    check_config_files
     create_namespace
     setup_helm_repos
     deploy_elasticsearch

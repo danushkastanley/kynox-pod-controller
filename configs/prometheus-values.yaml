@@ -1,0 +1,236 @@
+server:
+  service:
+    type: NodePort
+  persistentVolume:
+    enabled: false
+    # For production, enable persistent storage:
+    # enabled: true
+    # size: 10Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Enable admin API for dynamic configuration
+  enableAdminApi: true
+
+serverFiles:
+  prometheus.yml:
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'rasp-cluster'
+        environment: 'development'
+
+    rule_files:
+      - "/etc/config/recording_rules.yml"
+      - "/etc/config/alerting_rules.yml"
+      - "/etc/config/rules"
+      - "/etc/config/alerts"
+
+    scrape_configs:
+      # RASP Controller - Main metrics endpoint
+      - job_name: 'rasp-controller'
+        static_configs:
+          - targets: ['rasp-controller.default.svc.cluster.local:8080']
+        metrics_path: '/api/v1/classifier/metrics/summary'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        honor_labels: true
+        params:
+          format: ['prometheus']
+
+      # RASP Controller - Health endpoint
+      - job_name: 'rasp-controller-health'
+        static_configs:
+          - targets: ['rasp-controller.default.svc.cluster.local:8080']
+        metrics_path: '/health'
+        scrape_interval: 60s
+        scrape_timeout: 10s
+
+      # RASP Controller - Full metrics (less frequent)
+      - job_name: 'rasp-controller-full'
+        static_configs:
+          - targets: ['rasp-controller.default.svc.cluster.local:8080']
+        metrics_path: '/api/v1/classifier/metrics'
+        scrape_interval: 120s
+        scrape_timeout: 15s
+
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics
+
+      # Kubernetes node cAdvisor
+      - job_name: 'kubernetes-nodes-cadvisor'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+
+      # Kubernetes pods with prometheus annotations
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Pending|Succeeded|Failed|Completed
+            action: drop
+
+      # Kubernetes services with prometheus annotations
+      - job_name: 'kubernetes-service-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: service
+
+  # Alerting rules for RASP system
+  alerting_rules.yml:
+    groups:
+      - name: rasp-alerts
+        rules:
+          - alert: RASPControllerDown
+            expr: up{job="rasp-controller"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "RASP Controller is down"
+              description: "RASP Controller has been down for more than 5 minutes."
+
+          - alert: RASPHighThreatDetection
+            expr: rate(rasp_threats_detected_total[5m]) > 10
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High threat detection rate"
+              description: "RASP is detecting threats at {{ $value }} per second."
+
+          - alert: RASPControllerHighMemory
+            expr: process_resident_memory_bytes{job="rasp-controller"} > 500000000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "RASP Controller high memory usage"
+              description: "RASP Controller memory usage is {{ $value | humanize1024 }}."
+
+# Pushgateway (optional, for batch jobs)
+pushgateway:
+  enabled: false
+
+# Alert manager configuration
+alertmanager:
+  enabled: true
+  service:
+    type: NodePort
+  persistentVolume:
+    enabled: false
+  config:
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alerts@rasp-system.local'
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'default'
+    receivers:
+      - name: 'default'
+        # Configure your preferred alerting channel here
+        # webhook_configs:
+        #   - url: 'http://your-webhook-url' 
