@@ -90,9 +90,6 @@ data:
         Host            opensearch-cluster-master.logging.svc.cluster.local
         Port            9200
         Index           rasp
-        Type            _doc
-        HTTP_User       
-        HTTP_Passwd     
         tls             Off
         tls.verify      Off
         Suppress_Type_Name On
@@ -101,7 +98,6 @@ data:
         Logstash_DateFormat %Y.%m.%d
         Include_Tag_Key On
         Tag_Key         source_tag
-        Buffer_Size     4KB
         
     [OUTPUT]
         Name            opensearch
@@ -109,9 +105,6 @@ data:
         Host            opensearch-cluster-master.logging.svc.cluster.local
         Port            9200
         Index           kubernetes
-        Type            _doc
-        HTTP_User       
-        HTTP_Passwd     
         tls             Off
         tls.verify      Off
         Suppress_Type_Name On
@@ -120,7 +113,6 @@ data:
         Logstash_DateFormat %Y.%m.%d
         Include_Tag_Key On
         Tag_Key         source_tag
-        Buffer_Size     4KB
 
   parsers.conf: |
     [PARSER]
