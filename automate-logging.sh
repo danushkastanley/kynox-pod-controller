@@ -136,20 +136,41 @@ deploy_elasticsearch() {
     if [ "$ENVIRONMENT" = "development" ]; then
         # Development: Disable security for easier setup
         log_info "Deploying Elasticsearch in development mode (security disabled)"
+        
+        # Create temporary values file for development
+        cat > /tmp/elasticsearch-dev-values.yaml <<EOF
+replicas: 1
+minimumMasterNodes: 1
+antiAffinity: "soft"
+esJavaOpts: "-Xmx512m -Xms512m"
+volumeClaimTemplate:
+  resources:
+    requests:
+      storage: 2Gi
+createCert: false
+protocol: http
+httpPort: 9200
+transportPort: 9300
+service:
+  type: ClusterIP
+clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
+esConfig:
+  elasticsearch.yml: |
+    xpack.security.enabled: false
+    xpack.security.enrollment.enabled: false
+    xpack.security.http.ssl.enabled: false
+    xpack.security.transport.ssl.enabled: false
+    discovery.type: single-node
+    network.host: 0.0.0.0
+EOF
+        
         helm upgrade --install elasticsearch elastic/elasticsearch \
           --namespace $NAMESPACE \
-          --set replicas=1 \
-          --set minimumMasterNodes=1 \
-          --set volumeClaimTemplate.resources.requests.storage=2Gi \
-          --set clusterHealthCheckParams="wait_for_status=yellow&timeout=1s" \
-          --set-string esConfig."elasticsearch\.yml"="xpack.security.enabled: false
-xpack.security.enrollment.enabled: false
-xpack.security.http.ssl.enabled: false
-xpack.security.transport.ssl.enabled: false
-discovery.type: single-node
-cluster.initial_master_nodes: []" \
-          --set createCert=false \
+          --values /tmp/elasticsearch-dev-values.yaml \
           --wait --timeout=300s
+          
+        # Clean up temp file
+        rm -f /tmp/elasticsearch-dev-values.yaml
     else
         # Production: Enable security with proper configuration
         log_info "Deploying Elasticsearch with security enabled"
