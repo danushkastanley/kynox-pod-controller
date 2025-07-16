@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -17,13 +18,14 @@ type SlackNotifier struct {
 }
 
 type slackMessage struct {
-	Channel string        `json:"channel,omitempty"`
-	Blocks  []slackBlock `json:"blocks"`
+	Channel string       `json:"channel,omitempty"`
+	Text    string       `json:"text,omitempty"`   // For simple text messages
+	Blocks  []slackBlock `json:"blocks,omitempty"` // For rich block messages
 }
 
 type slackBlock struct {
-	Type string      `json:"type"`
-	Text *slackText  `json:"text,omitempty"`
+	Type   string       `json:"type"`
+	Text   *slackText   `json:"text,omitempty"`
 	Fields []slackField `json:"fields,omitempty"`
 }
 
@@ -40,7 +42,7 @@ type slackField struct {
 func NewSlackNotifier() *SlackNotifier {
 	webhookURL := os.Getenv("SLACK_WEBHOOK_URL")
 	channel := os.Getenv("SLACK_CHANNEL")
-	
+
 	return &SlackNotifier{
 		webhookURL: webhookURL,
 		channel:    channel,
@@ -64,14 +66,15 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 
 	logrus.WithFields(logrus.Fields{
 		"alert_level": alert.Level,
-		"title": alert.Title,
-		"node": alert.NodeName,
-		"pod": alert.PodName,
-		"namespace": alert.Namespace,
+		"title":       alert.Title,
+		"node":        alert.NodeName,
+		"pod":         alert.PodName,
+		"namespace":   alert.Namespace,
 	}).Info("📤 Preparing Slack notification")
 
-	// Create rich Slack message
-	msg := s.createSlackMessage(alert)
+	// Use simplified message to avoid rate limiting issues
+	// TODO: Switch to rich message when enhanced classification is enabled
+	msg := s.createSimplifiedSlackMessage(alert)
 
 	// Convert to JSON
 	payload, err := json.Marshal(msg)
@@ -80,8 +83,9 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 		return fmt.Errorf("failed to marshal slack message: %v", err)
 	}
 
-	// Send to Slack
-	logrus.Debug("📡 Sending message to Slack...")
+	// Send to Slack (simplified message should avoid rate limiting)
+	logrus.Debug("📡 Sending simplified message to Slack...")
+
 	resp, err := http.Post(s.webhookURL, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
 		logrus.WithError(err).Error("❌ Failed to send Slack message")
@@ -89,14 +93,21 @@ func (s *SlackNotifier) Send(alert *Alert) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusOK {
+		// Success!
+	} else if resp.StatusCode == 429 {
+		// Still rate limited even with simplified message
+		logrus.WithField("status_code", resp.StatusCode).Warn("⚠️ Slack webhook still rate limited with simplified message")
+		return fmt.Errorf("slack webhook rate limited: status %d", resp.StatusCode)
+	} else {
+		// Other error
 		logrus.WithField("status_code", resp.StatusCode).Error("❌ Slack API returned error")
 		return fmt.Errorf("slack API returned non-200 status: %d", resp.StatusCode)
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"alert_level": alert.Level,
-		"title": alert.Title,
+		"title":       alert.Title,
 	}).Info("✅ Slack notification sent successfully")
 
 	return nil
@@ -118,10 +129,10 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 
 	// Create header block
 	headerText := fmt.Sprintf("%s *%s Alert:* %s", emoji, alert.Level, alert.Title)
-	
+
 	// Create context blocks
 	var contextFields []slackField
-	
+
 	// Add target information (where the event occurred)
 	contextFields = append(contextFields,
 		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Node:* %s", alert.NodeName)},
@@ -140,7 +151,7 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 	// Add monitoring context if present
 	if len(alert.ContainerContext) > 0 {
 		var monitoringDetails []string
-		
+
 		// Check if we have monitoring agent info
 		if monitoringAgent, exists := alert.ContainerContext["monitoring_agent"]; exists {
 			monitoringDetails = append(monitoringDetails, fmt.Sprintf("• Detected by: %s", monitoringAgent))
@@ -155,14 +166,14 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 				monitoringDetails = append(monitoringDetails, fmt.Sprintf("• Container ID: %s", targetContainer))
 			}
 		}
-		
+
 		// Add other container context if not part of monitoring info
 		for k, v := range alert.ContainerContext {
 			if !strings.HasPrefix(k, "monitoring_") && !strings.HasPrefix(k, "target_") && v != "" {
 				monitoringDetails = append(monitoringDetails, fmt.Sprintf("• %s: %s", k, v))
 			}
 		}
-		
+
 		if len(monitoringDetails) > 0 {
 			contextFields = append(contextFields,
 				slackField{Type: "mrkdwn", Text: "*Monitoring Context:*\n" + strings.Join(monitoringDetails, "\n")},
@@ -230,13 +241,164 @@ func (s *SlackNotifier) createSlackMessage(alert *Alert) slackMessage {
 		}
 	}
 
+	// Add MITRE ATT&CK information
+	if len(alert.AttackTechniques) > 0 {
+		var techniqueDetails []string
+		for _, technique := range alert.AttackTechniques {
+			detail := fmt.Sprintf("• %s (%s) - %s [Confidence: %.0f%%]",
+				technique.TechniqueName,
+				technique.TechniqueID,
+				technique.Tactic,
+				technique.Confidence*100)
+			techniqueDetails = append(techniqueDetails, detail)
+		}
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: "*🎯 MITRE ATT&CK Techniques:*\n" + strings.Join(techniqueDetails, "\n")},
+		)
+	}
+
+	// Add CVE information
+	if len(alert.CVEReferences) > 0 {
+		var cveDetails []string
+		for _, cve := range alert.CVEReferences {
+			detail := fmt.Sprintf("• %s (CVSS: %.1f) - %s - %s",
+				cve.CVEID,
+				cve.Score,
+				cve.Severity,
+				cve.Description)
+			cveDetails = append(cveDetails, detail)
+		}
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: "*🔍 CVE References:*\n" + strings.Join(cveDetails, "\n")},
+		)
+	}
+
+	// Add Threat Intelligence information
+	if alert.ThreatIntel != nil {
+		var threatDetails []string
+
+		if len(alert.ThreatIntel.ThreatActors) > 0 {
+			threatDetails = append(threatDetails, fmt.Sprintf("• Threat Actors: %s", strings.Join(alert.ThreatIntel.ThreatActors, ", ")))
+		}
+		if len(alert.ThreatIntel.Campaigns) > 0 {
+			threatDetails = append(threatDetails, fmt.Sprintf("• Campaigns: %s", strings.Join(alert.ThreatIntel.Campaigns, ", ")))
+		}
+		if len(alert.ThreatIntel.Malware) > 0 {
+			threatDetails = append(threatDetails, fmt.Sprintf("• Malware: %s", strings.Join(alert.ThreatIntel.Malware, ", ")))
+		}
+		if len(alert.ThreatIntel.IOCs) > 0 {
+			threatDetails = append(threatDetails, fmt.Sprintf("• IOCs: %s", strings.Join(alert.ThreatIntel.IOCs, ", ")))
+		}
+
+		if len(threatDetails) > 0 {
+			contextFields = append(contextFields,
+				slackField{Type: "mrkdwn", Text: "*🕵️ Threat Intelligence:*\n" + strings.Join(threatDetails, "\n")},
+			)
+		}
+	}
+
+	// Add Custom Classifications
+	if len(alert.Classifications) > 0 {
+		var classificationDetails []string
+		for _, classification := range alert.Classifications {
+			detail := fmt.Sprintf("• %s: %s", classification.Framework, classification.Category)
+			if classification.Subcategory != "" {
+				detail += fmt.Sprintf(" - %s", classification.Subcategory)
+			}
+			detail += fmt.Sprintf(" [Confidence: %.0f%%]", classification.Confidence*100)
+			classificationDetails = append(classificationDetails, detail)
+		}
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: "*📊 Classifications:*\n" + strings.Join(classificationDetails, "\n")},
+		)
+	}
+
 	return slackMessage{
 		Channel: s.channel,
 		Blocks: []slackBlock{
 			{
-				Type: "header",
+				Type: "section",
 				Text: &slackText{
-					Type: "plain_text",
+					Type: "mrkdwn",
+					Text: headerText,
+				},
+			},
+			{
+				Type: "section",
+				Text: &slackText{
+					Type: "mrkdwn",
+					Text: alert.Message,
+				},
+			},
+			{
+				Type:   "section",
+				Fields: contextFields,
+			},
+		},
+	}
+}
+
+func (s *SlackNotifier) createSimplifiedSlackMessage(alert *Alert) slackMessage {
+	// Color coding based on alert level
+	var emoji string
+	switch alert.Level {
+	case AlertLevelCritical:
+		emoji = "🚨"
+	case AlertLevelHigh:
+		emoji = "🔴"
+	case AlertLevelWarning:
+		emoji = "⚠️"
+	default:
+		emoji = "ℹ️"
+	}
+
+	// Create header similar to the screenshot
+	headerText := fmt.Sprintf("%s *%s Alert:* %s", emoji, alert.Level, alert.Title)
+
+	// Create organized context fields like in the screenshot
+	var contextFields []slackField
+
+	// Left column - Basic info
+	contextFields = append(contextFields,
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Node:* %s", alert.NodeName)},
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Pod:* %s", alert.PodName)},
+	)
+
+	// Right column - Event info
+	contextFields = append(contextFields,
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Namespace:* %s", alert.Namespace)},
+		slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Event Type:* %s", alert.EventType)},
+	)
+
+	// Command info (full width if present)
+	if alert.Command != "" {
+		command := alert.Command
+		if len(command) > 100 {
+			command = command[:97] + "..."
+		}
+		contextFields = append(contextFields,
+			slackField{Type: "mrkdwn", Text: fmt.Sprintf("*Command:* `%s`", command)},
+		)
+	}
+
+	// Security context (like in screenshot)
+	if len(alert.SecurityInfo) > 0 {
+		for k, v := range alert.SecurityInfo {
+			if v != "" && k != "message" {
+				contextFields = append(contextFields,
+					slackField{Type: "mrkdwn", Text: fmt.Sprintf("*%s:* %s", strings.Title(k), v)},
+				)
+			}
+		}
+	}
+
+	return slackMessage{
+		Channel: s.channel,
+		Blocks: []slackBlock{
+			{
+				Type: "section",
+				Text: &slackText{
+					Type: "mrkdwn",
 					Text: headerText,
 				},
 			},

@@ -12,9 +12,9 @@ data:
     DEBUG=debug  # Set to 'debug' for verbose logging
 
     # Alert Configuration
-    # Slack Integration
-    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
-    SLACK_CHANNEL=#alert
+    # Slack Integration (disabled due to message limits)
+    # SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
+    # SLACK_CHANNEL=#alert
 
     # Generic Webhook Integration
     ALERT_WEBHOOK_URL=
@@ -22,4 +22,4 @@ data:
     # Alert Filtering
     ALERT_EVENT_TYPES=exec,setuid,mount,open
     ALERT_MIN_LEVEL=critical
-    ALERT_RATE_LIMIT=1
+    ALERT_RATE_LIMIT=60

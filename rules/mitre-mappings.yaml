@@ -1,0 +1,168 @@
+apiVersion: security.rasp.io/v1
+kind: MitreAttackMappings
+metadata:
+  name: default-mitre-mappings
+  version: "1.0"
+  description: "Default MITRE ATT&CK technique mappings for RASP"
+  mitre_version: "v13.1"
+
+techniques:
+  - technique_id: "T1055"
+    technique_name: "Process Injection"
+    tactic: "Defense Evasion"
+    confidence: 0.8
+    event_matches:
+      - event_type: "EXEC"
+        command_patterns:
+          - ".*ptrace.*"
+          - ".*gdb.*attach.*"
+          - ".*strace.*"
+        conditions:
+          - field: "uid"
+            operator: "equals"
+            value: "0"
+
+  - technique_id: "T1057"
+    technique_name: "Process Discovery"
+    tactic: "Discovery"
+    confidence: 0.6
+    event_matches:
+      - event_type: "EXEC"
+        command_patterns:
+          - "ps.*"
+          - "top.*"
+          - "htop.*"
+          - "pgrep.*"
+          - "pidof.*"
+
+  - technique_id: "T1082"
+    technique_name: "System Information Discovery"
+    tactic: "Discovery"
+    confidence: 0.7
+    event_matches:
+      - event_type: "EXEC"
+        command_patterns:
+          - "uname.*"
+          - "cat /proc/version"
+          - "lscpu.*"
+          - "dmidecode.*"
+      - event_type: "OPEN"
+        file_patterns:
+          - "/proc/version"
+          - "/proc/cpuinfo"
+          - "/etc/os-release"
+
+  - technique_id: "T1083"
+    technique_name: "File and Directory Discovery"
+    tactic: "Discovery"
+    confidence: 0.5
+    event_matches:
+      - event_type: "EXEC"
+        command_patterns:
+          - "find.*"
+          - "locate.*"
+          - "ls.*-R.*"
+          - "tree.*"
+
+  - technique_id: "T1105"
+    technique_name: "Ingress Tool Transfer"
+    tactic: "Command and Control"
+    confidence: 0.9
+    event_matches:
+      - event_type: "EXEC"
+        command_patterns:
+          - "wget.*"
+          - "curl.*"
+          - "nc.*"
+          - "netcat.*"
+      - event_type: "CONNECT"
+        network_patterns:
+          - external_destination: true
+
+  - technique_id: "T1543.002"
+    technique_name: "Systemd Service"
+    tactic: "Persistence"
+    confidence: 0.8
+    event_matches:
+      - event_type: "EXEC"
+        command_patterns:
+          - "systemctl.*enable.*"
+          - "systemctl.*start.*"
+      - event_type: "OPEN"
+        file_patterns:
+          - "/etc/systemd/system/.*"
+          - "/lib/systemd/system/.*"
+        conditions:
+          - field: "uid"
+            operator: "equals"
+            value: "0"
+
+  - technique_id: "T1548.001"
+    technique_name: "Setuid and Setgid"
+    tactic: "Privilege Escalation"
+    confidence: 0.9
+    event_matches:
+      - event_type: "SETUID"
+      - event_type: "SETGID"
+      - event_type: "CHMOD"
+        conditions:
+          - field: "uid"
+            operator: "equals"
+            value: "0"
+
+  - technique_id: "T1611"
+    technique_name: "Escape to Host"
+    tactic: "Privilege Escalation"
+    confidence: 0.8
+    event_matches:
+      - event_type: "MOUNT"
+        file_patterns:
+          - "/proc.*"
+          - "/sys.*"
+          - "/dev.*"
+      - event_type: "OPEN"
+        file_patterns:
+          - "/var/run/docker.sock"
+          - "/var/lib/containerd/.*"
+
+tactics:
+  - name: "Initial Access"
+    description: "Techniques used to gain an initial foothold"
+    techniques: []
+
+  - name: "Discovery"
+    description: "Techniques used to gain knowledge about the system"
+    techniques: ["T1057", "T1082", "T1083"]
+
+  - name: "Defense Evasion"
+    description: "Techniques used to avoid detection"
+    techniques: ["T1055"]
+
+  - name: "Privilege Escalation"
+    description: "Techniques used to gain higher privileges"
+    techniques: ["T1548.001", "T1611"]
+
+  - name: "Persistence"
+    description: "Techniques used to maintain access"
+    techniques: ["T1543.002"]
+
+  - name: "Command and Control"
+    description: "Techniques used to communicate with systems"
+    techniques: ["T1105"]
+
+data_sources:
+  - name: "Process Monitoring"
+    description: "Information about process creation and modification"
+    event_types: ["EXEC", "FORK"]
+
+  - name: "File Monitoring"
+    description: "Information about file system activity"
+    event_types: ["OPEN", "CHMOD"]
+
+  - name: "Network Traffic"
+    description: "Information about network connections"
+    event_types: ["CONNECT", "BIND", "ACCEPT"]
+
+  - name: "Process Monitoring"
+    description: "Information about process modifications"
+    event_types: ["SETUID", "SETGID", "CAPSET", "PTRACE"] 
