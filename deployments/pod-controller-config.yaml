@@ -11,6 +11,16 @@ data:
     LOG_LEVEL=debug
     DEBUG=debug  # Set to 'debug' for verbose logging
 
+    # Classifier Configuration
+    CLASSIFIER_TYPE=yaml  # Options: default, yaml, cve
+    RULES_PATH=rules/default-rules.yaml
+    
+    # CVE Classifier Configuration (used when CLASSIFIER_TYPE=cve)
+    CVE_DATA_PATH=data/cve-database.json
+    CVE_API_KEY=
+    CVE_API_ENDPOINT=https://services.nvd.nist.gov/rest/json/cves/2.0
+    CVE_UPDATE_INTERVAL=24h
+
     # Alert Configuration
     # Slack Integration
     SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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

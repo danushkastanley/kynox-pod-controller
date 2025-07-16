@@ -1,7 +1,9 @@
 package classifier
 
 import (
+	"fmt"
 	pb "pod-controller/pkg/telemetry"
+	"time"
 )
 
 // EventClassifierInterface defines the interface for event classification
@@ -37,6 +39,7 @@ type ClassifierType string
 const (
 	ClassifierTypeDefault ClassifierType = "default"
 	ClassifierTypeYAML    ClassifierType = "yaml"
+	ClassifierTypeCVE     ClassifierType = "cve"
 )
 
 // ClassifierConfig holds configuration for classifier creation
@@ -45,11 +48,33 @@ type ClassifierConfig struct {
 	RulesPath       string
 	ThreatDetector  ThreatDetectorInterface
 	FallbackEnabled bool
+	// CVE-specific configuration
+	CVEDataPath       string
+	CVEAPIKey         string
+	CVEAPIEndpoint    string
+	CVEUpdateInterval time.Duration
 }
 
 // NewClassifier creates a classifier based on the configuration
 func NewClassifier(config *ClassifierConfig) (EventClassifierInterface, error) {
-	// For now, always return the default classifier
-	// TODO: Add YAML classifier integration in a separate package to avoid import cycles
-	return NewEventClassifier(config.ThreatDetector), nil
+	switch config.Type {
+	case ClassifierTypeDefault:
+		return NewEventClassifier(config.ThreatDetector), nil
+
+	case ClassifierTypeYAML:
+		// TODO: Implement YAML classifier integration
+		// For now, fall back to default to avoid import cycles
+		return NewEventClassifier(config.ThreatDetector), nil
+
+	case ClassifierTypeCVE:
+		// TODO: Implement CVE classifier in Phase 2
+		// For now, fall back to default
+		return NewEventClassifier(config.ThreatDetector), nil
+
+	default:
+		if config.FallbackEnabled {
+			return NewEventClassifier(config.ThreatDetector), nil
+		}
+		return nil, fmt.Errorf("unknown classifier type: %s", config.Type)
+	}
 }
