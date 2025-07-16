@@ -1,0 +1,350 @@
+# Fluent Bit configuration for RASP log collection with OpenSearch
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 2020
+
+# Resource limits
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Tolerations for running on all nodes
+tolerations:
+  - key: node-role.kubernetes.io/master
+    operator: Exists
+    effect: NoSchedule
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+# Node selector (optional)
+nodeSelector: {}
+
+# Pod Security Context
+securityContext:
+  fsGroup: 2000
+  runAsUser: 1000
+  runAsNonRoot: true
+
+# Configuration files
+config:
+  # Main Fluent Bit configuration
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Grace         30
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+        Health_Check  On
+        HC_Errors_Count 5
+        HC_Retry_Failure_Count 5
+        HC_Period     60
+        storage.path  /tmp/storage
+        storage.sync  normal
+        storage.checksum off
+        storage.backlog.mem_limit 5M
+
+    [INPUT]
+        Name              tail
+        Alias             kubernetes-rasp-controller
+        Tag               rasp.controller.*
+        Path              /var/log/containers/*rasp-controller*.log
+        Parser            docker
+        DB                /tmp/flb_rasp_controller.db
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+        Rotate_Wait       30
+        storage.type      memory
+
+    [INPUT]
+        Name              tail
+        Alias             kubernetes-rasp-agent
+        Tag               rasp.agent.*
+        Path              /var/log/containers/*pod-agent*.log
+        Parser            docker
+        DB                /tmp/flb_rasp_agent.db
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+        Rotate_Wait       30
+        storage.type      memory
+
+    [INPUT]
+        Name              tail
+        Alias             kubernetes-containers
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Exclude_Path      /var/log/containers/*_kube-system_*, /var/log/containers/*_logging_*
+        Parser            docker
+        DB                /tmp/flb_kube.db
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+        Rotate_Wait       30
+        storage.type      memory
+
+    [FILTER]
+        Name                kubernetes
+        Alias               kubernetes-filter
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Annotations         Off
+        Labels              On
+
+    [FILTER]
+        Name                kubernetes
+        Alias               rasp-controller-filter
+        Match               rasp.controller.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     rasp.controller.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Annotations         On
+        Labels              On
+
+    [FILTER]
+        Name                kubernetes
+        Alias               rasp-agent-filter
+        Match               rasp.agent.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     rasp.agent.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Annotations         On
+        Labels              On
+
+    # Parse RASP Controller JSON logs
+    [FILTER]
+        Name                parser
+        Alias               rasp-controller-json-parser
+        Match               rasp.controller.*
+        Key_Name            log
+        Parser              rasp_json_parser
+        Reserve_Data        On
+        Preserve_Key        On
+
+    # Parse RASP Agent JSON logs  
+    [FILTER]
+        Name                parser
+        Alias               rasp-agent-json-parser
+        Match               rasp.agent.*
+        Key_Name            log
+        Parser              rasp_json_parser
+        Reserve_Data        On
+        Preserve_Key        On
+
+    # Extract nested JSON fields for RASP logs
+    [FILTER]
+        Name                nest
+        Alias               rasp-json-extractor
+        Match               rasp.*
+        Operation           lift
+        Nested_under        parsed_log
+        Add_prefix          rasp_
+
+    # Enrich RASP logs with additional metadata
+    [FILTER]
+        Name                modify
+        Alias               rasp-enrichment
+        Match               rasp.*
+        Add                 component rasp
+        Add                 cluster local
+        Add                 environment development
+        Add                 log_source fluent-bit
+
+    # Add timestamp parsing for RASP events
+    [FILTER]
+        Name                parser
+        Alias               rasp-timestamp-parser
+        Match               rasp.*
+        Key_Name            rasp_time
+        Parser              iso8601_parser
+        Reserve_Data        On
+
+    [OUTPUT]
+        Name                opensearch
+        Alias               opensearch-rasp
+        Match               rasp.*
+        Host                opensearch.logging.svc.cluster.local
+        Port                9200
+        Index               rasp
+        Suppress_Type_Name  On
+        Logstash_Format     On
+        Logstash_Prefix     rasp
+        Logstash_DateFormat %Y.%m.%d
+        Include_Tag_Key     On
+        Tag_Key             @tag
+        Time_Key            @timestamp
+        Retry_Limit         5
+        Replace_Dots        On
+        Trace_Error         On
+        HTTP_User           ""
+        HTTP_Passwd         ""
+        tls                 Off
+        storage.total_limit_size 512M
+
+    [OUTPUT]
+        Name                opensearch
+        Alias               opensearch-kube
+        Match               kube.*
+        Host                opensearch.logging.svc.cluster.local
+        Port                9200
+        Index               kubernetes
+        Suppress_Type_Name  On
+        Logstash_Format     On
+        Logstash_Prefix     kubernetes
+        Logstash_DateFormat %Y.%m.%d
+        Include_Tag_Key     On
+        Tag_Key             @tag
+        Time_Key            @timestamp
+        Retry_Limit         5
+        Replace_Dots        On
+        Trace_Error         On
+        HTTP_User           ""
+        HTTP_Passwd         ""
+        tls                 Off
+        storage.total_limit_size 512M
+
+  # Custom parsers for RASP logs
+  parsers.conf: |
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+
+    [PARSER]
+        Name        rasp_json_parser
+        Format      regex
+        Regex       ^(?<timestamp>[^\s]+)\s+(?<stream>\w+)\s+(?<logtag>\w+)\s+(?<message>.*)$
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    # Advanced JSON parser for nested RASP event logs
+    [PARSER]
+        Name        rasp_event_json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+        Time_Keep   On
+        # Decode nested JSON in the message field
+        Decode_Field_As json message parsed_log
+
+    # ISO8601 timestamp parser
+    [PARSER]
+        Name        iso8601_parser
+        Format      regex
+        Regex       ^(?<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    # JSON array parser for RASP events that come as arrays
+    [PARSER]
+        Name        rasp_array_parser
+        Format      regex
+        Regex       ^\[(?<json_content>.*)\]$
+        
+    # CRI parser for container runtime
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    # Syslog parser
+    [PARSER]
+        Name        syslog
+        Format      regex
+        Regex       ^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
+        Time_Key    time
+        Time_Format %b %d %H:%M:%S
+
+# Volumes and mounts
+volumeMounts:
+  - name: varlog
+    mountPath: /var/log
+    readOnly: true
+  - name: varlibdockercontainers
+    mountPath: /var/lib/docker/containers
+    readOnly: true
+  - name: etcmachineid
+    mountPath: /etc/machine-id
+    readOnly: true
+
+volumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+  - name: etcmachineid
+    hostPath:
+      path: /etc/machine-id
+      type: File
+
+# DaemonSet configuration
+daemonSetVolumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+  - name: etcmachineid
+    hostPath:
+      path: /etc/machine-id
+      type: File
+
+daemonSetVolumeMounts:
+  - name: varlog
+    mountPath: /var/log
+    readOnly: true
+  - name: varlibdockercontainers
+    mountPath: /var/lib/docker/containers
+    readOnly: true
+  - name: etcmachineid
+    mountPath: /etc/machine-id
+    readOnly: true
+
+# Metrics
+metrics:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 2020
+
+# Environment variables
+env:
+  - name: FLUENT_OPENSEARCH_HOST
+    value: "opensearch.logging.svc.cluster.local"
+  - name: FLUENT_OPENSEARCH_PORT
+    value: "9200" 
