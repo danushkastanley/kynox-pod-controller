@@ -30,6 +30,6 @@ data:
     ALERT_WEBHOOK_URL=
 
     # Alert Filtering
-    ALERT_EVENT_TYPES=exec,setuid,mount,open
-    ALERT_MIN_LEVEL=critical
-    ALERT_RATE_LIMIT=1
+    ALERT_EVENT_TYPES=chmod,setuid
+    ALERT_MIN_LEVEL=warning
+    ALERT_RATE_LIMIT=10
