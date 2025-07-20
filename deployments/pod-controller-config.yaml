@@ -29,7 +29,7 @@ data:
     # Generic Webhook Integration
     ALERT_WEBHOOK_URL=
 
-    # Alert Filtering
-    ALERT_EVENT_TYPES=chmod,setuid
-    ALERT_MIN_LEVEL=warning
-    ALERT_RATE_LIMIT=10
+    # Alert Filtering - DEBUG MODE
+    ALERT_EVENT_TYPES=CHMOD,SETUID,OPEN
+    ALERT_MIN_LEVEL=info
+    ALERT_RATE_LIMIT=30
