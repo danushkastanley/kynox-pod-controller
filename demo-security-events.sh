@@ -1,234 +1,338 @@
 #!/bin/bash
 
 # =============================================================================
-# RASP Security Monitoring Demo Script
+# RASP Security Demo Script
 # =============================================================================
-# This script triggers various security events to demonstrate the RASP system
-# Perfect for viva presentations and security demonstrations
+# This script demonstrates how to trigger security alerts on-demand for demos
+# Each command will trigger a specific alert type that you can show to audience
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-echo -e "${BLUE}🛡️  RASP Security Monitoring Demo${NC}"
-echo -e "${BLUE}====================================${NC}"
+echo -e "${BLUE}🚨 RASP Security Event Demo Script${NC}"
+echo -e "${BLUE}=================================${NC}"
 echo ""
-echo -e "${GREEN}This script will trigger various security events to demonstrate:"
-echo -e "  🚨 Critical security alerts"
-echo -e "  ⚠️  High severity events"
-echo -e "  📡 Network monitoring"
-echo -e "  📁 File access monitoring"
-echo -e "  🔐 Permission changes"
-echo -e "  💬 Slack integration${NC}"
+echo -e "${YELLOW}This script will help you trigger security alerts during demos.${NC}"
+echo -e "${YELLOW}Make sure you're running this inside a pod being monitored.${NC}"
 echo ""
 
-# Wait for user confirmation
-read -p "Press Enter to continue or Ctrl+C to cancel..."
+# Function to wait for user input
+wait_for_demo() {
+    echo -e "${CYAN}Press ENTER when ready to demonstrate this attack...${NC}"
+    read -r
+}
+
+# Function to show alert expectation
+show_alert_info() {
+    local event_type=$1
+    local description=$2
+    echo -e "${GREEN}📡 Expected Alert: ${YELLOW}$event_type${GREEN} - $description${NC}"
+    echo ""
+}
+
+echo -e "${BLUE}Available Demo Attacks:${NC}"
+echo -e "1. ${YELLOW}CHMOD${NC} - File permission manipulation"
+echo -e "2. ${YELLOW}SETUID${NC} - Privilege escalation attempt"
+echo -e "3. ${YELLOW}PTRACE${NC} - Process injection/debugging"
+echo -e "4. ${YELLOW}MOUNT${NC} - Container escape attempt"
+echo -e "5. ${YELLOW}EXEC${NC} - Suspicious command execution"
 echo ""
 
-# =============================================================================
-# PHASE 1: CRITICAL SECURITY EVENTS
-# =============================================================================
+echo -e "${RED}Select demo scenario:${NC}"
+echo "1) Run all demos in sequence"
+echo "2) File Permission Attack (CHMOD)"
+echo "3) Privilege Escalation Attack (SETUID)"  
+echo "4) Process Injection Attack (PTRACE)"
+echo "5) Container Escape Attack (MOUNT)"
+echo "6) Suspicious Command Execution (EXEC)"
+echo "7) Exit"
+echo ""
 
-echo -e "${RED}🚨 PHASE 1: CRITICAL SECURITY EVENTS${NC}"
-echo -e "${RED}=====================================${NC}"
+read -p "Enter your choice (1-7): " choice
 
-echo -e "${YELLOW}1. Dangerous File Permission Changes${NC}"
-echo "   Triggering: chmod 777 /etc/passwd (CRITICAL ALERT Expected)"
-sleep 2
+case $choice in
+    1)
+        echo -e "${BLUE}🎭 Running Complete Security Demo Sequence${NC}"
+        echo -e "${BLUE}=========================================${NC}"
+        ;;
+    2)
+        choice="chmod_demo"
+        ;;
+    3)
+        choice="setuid_demo"
+        ;;
+    4)
+        choice="ptrace_demo"
+        ;;
+    5)
+        choice="mount_demo"
+        ;;
+    6)
+        choice="exec_demo"
+        ;;
+    7)
+        echo -e "${GREEN}Demo completed!${NC}"
+        exit 0
+        ;;
+    *)
+        echo -e "${RED}Invalid choice${NC}"
+        exit 1
+        ;;
+esac
 
-# Create a backup first
-sudo cp /etc/passwd /etc/passwd.backup.demo 2>/dev/null || true
+# Demo 1: CHMOD Attack - File Permission Manipulation
+if [[ "$choice" == "1" || "$choice" == "chmod_demo" ]]; then
+    echo -e "${BLUE}🔐 Demo 1: File Permission Manipulation Attack${NC}"
+    echo -e "${BLUE}=============================================${NC}"
+    echo -e "${YELLOW}Scenario: Attacker tries to make /etc/passwd world-writable${NC}"
+    show_alert_info "CHMOD" "Critical file permission change detected"
+    wait_for_demo
+    
+    echo -e "${RED}🔨 Executing: chmod 777 /etc/passwd${NC}"
+    chmod 777 /etc/passwd 2>/dev/null || echo -e "${YELLOW}⚠️ Command may fail but alert should still fire${NC}"
+    
+    echo -e "${GREEN}✅ CHMOD alert should appear in Slack now!${NC}"
+    echo ""
+    sleep 3
+fi
 
-# This should trigger a CRITICAL alert
-sudo chmod 777 /etc/passwd
-echo -e "${GREEN}   ✅ Triggered: World-writable permissions on sensitive file${NC}"
-sleep 3
+# Demo 2: SETUID Attack - Privilege Escalation 
+if [[ "$choice" == "1" || "$choice" == "setuid_demo" ]]; then
+    echo -e "${BLUE}⬆️ Demo 2: Privilege Escalation Attack${NC}"
+    echo -e "${BLUE}=================================${NC}"
+    echo -e "${YELLOW}Scenario: Attacker attempts to escalate privileges${NC}"
+    show_alert_info "SETUID" "Privilege escalation attempt detected"
+    wait_for_demo
+    
+    echo -e "${RED}🔨 Executing: chmod +s /bin/bash${NC}"
+    chmod +s /bin/bash 2>/dev/null || echo -e "${YELLOW}⚠️ Command may fail but may trigger SETUID monitoring${NC}"
+    
+    # Alternative SETUID trigger
+    echo -e "${RED}🔨 Alternative: Creating setuid binary${NC}"
+    cat > /tmp/setuid_test.c << 'EOF'
+#include <unistd.h>
+#include <stdio.h>
+int main() {
+    setuid(0);
+    printf("SETUID test\n");
+    return 0;
+}
+EOF
+    
+    if command -v gcc >/dev/null 2>&1; then
+        gcc /tmp/setuid_test.c -o /tmp/setuid_test 2>/dev/null || true
+        chmod +s /tmp/setuid_test 2>/dev/null || true
+        /tmp/setuid_test 2>/dev/null || true
+    else
+        echo -e "${YELLOW}⚠️ GCC not available, using alternative method${NC}"
+        # This should trigger SETUID monitoring
+        echo "0" > /proc/self/uid_map 2>/dev/null || true
+    fi
+    
+    echo -e "${GREEN}✅ SETUID alert should appear in Slack now!${NC}"
+    echo ""
+    sleep 3
+fi
 
-# Restore permissions
-sudo chmod 644 /etc/passwd
-echo -e "${GREEN}   ↩️  Restored: Original permissions${NC}"
-sleep 2
+# Demo 3: PTRACE Attack - Process Injection
+if [[ "$choice" == "1" || "$choice" == "ptrace_demo" ]]; then
+    echo -e "${BLUE}🎯 Demo 3: Process Injection Attack${NC}"
+    echo -e "${BLUE}==============================${NC}"
+    echo -e "${YELLOW}Scenario: Attacker attempts to debug/inject into processes${NC}"
+    show_alert_info "PTRACE" "Process debugging/injection attempt detected"
+    wait_for_demo
+    
+    # Create a simple target process
+    echo -e "${RED}🔨 Executing: ptrace-based process debugging${NC}"
+    
+    # Start a background process to attach to
+    sleep 300 &
+    TARGET_PID=$!
+    
+    # Try to attach with gdb (if available)
+    if command -v gdb >/dev/null 2>&1; then
+        echo -e "${RED}🔨 Using GDB to attach to process $TARGET_PID${NC}"
+        timeout 2 gdb -batch -ex "attach $TARGET_PID" -ex "detach" -ex "quit" 2>/dev/null || true
+    elif command -v strace >/dev/null 2>&1; then
+        echo -e "${RED}🔨 Using strace to trace process $TARGET_PID${NC}"
+        timeout 2 strace -p $TARGET_PID 2>/dev/null || true
+    else
+        echo -e "${YELLOW}⚠️ No debugging tools available, creating manual ptrace call${NC}"
+        # Manual ptrace system call if possible
+        cat > /tmp/ptrace_test.c << 'EOF'
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <stdio.h>
+int main() {
+    long result = ptrace(PTRACE_ATTACH, 1, NULL, NULL);
+    printf("PTRACE result: %ld\n", result);
+    return 0;
+}
+EOF
+        if command -v gcc >/dev/null 2>&1; then
+            gcc /tmp/ptrace_test.c -o /tmp/ptrace_test 2>/dev/null || true
+            /tmp/ptrace_test 2>/dev/null || true
+        fi
+    fi
+    
+    # Clean up
+    kill $TARGET_PID 2>/dev/null || true
+    
+    echo -e "${GREEN}✅ PTRACE alert should appear in Slack now!${NC}"
+    echo ""
+    sleep 3
+fi
 
-echo -e "${YELLOW}2. Suspicious Command Execution${NC}"
-echo "   Triggering: netcat execution (HIGH/CRITICAL ALERT Expected)"
-sleep 2
+# Demo 4: MOUNT Attack - Container Escape
+if [[ "$choice" == "1" || "$choice" == "mount_demo" ]]; then
+    echo -e "${BLUE}🚪 Demo 4: Container Escape Attempt${NC}"
+    echo -e "${BLUE}===============================${NC}"
+    echo -e "${YELLOW}Scenario: Attacker attempts to mount host filesystem${NC}"
+    show_alert_info "MOUNT" "Container escape attempt detected"
+    wait_for_demo
+    
+    echo -e "${RED}🔨 Executing: Suspicious mount operations${NC}"
+    
+    # Try various mount operations that would be suspicious
+    echo -e "${RED}🔨 Attempting to mount /proc${NC}"
+    mount -t proc proc /tmp/proc_mount 2>/dev/null || echo -e "${YELLOW}⚠️ Mount failed (expected) but should trigger alert${NC}"
+    
+    echo -e "${RED}🔨 Attempting to mount host filesystem${NC}"
+    mount /dev/sda1 /mnt 2>/dev/null || echo -e "${YELLOW}⚠️ Mount failed (expected) but should trigger alert${NC}"
+    
+    echo -e "${RED}🔨 Attempting bind mount${NC}"
+    mount --bind /proc /tmp/bind_proc 2>/dev/null || echo -e "${YELLOW}⚠️ Mount failed (expected) but should trigger alert${NC}"
+    
+    echo -e "${GREEN}✅ MOUNT alert should appear in Slack now!${NC}"
+    echo ""
+    sleep 3
+fi
 
-# Try different suspicious commands
-echo "   Testing network tools..."
-which nc >/dev/null 2>&1 && {
-    echo "Testing netcat connection..." | nc -l -p 31337 -w 1 &
-    sleep 1
-    pkill nc 2>/dev/null || true
-    echo -e "${GREEN}   ✅ Triggered: Netcat execution${NC}"
-} || echo -e "${YELLOW}   ⚠️  Netcat not available${NC}"
+# Demo 5: EXEC Attack - Suspicious Command Execution
+if [[ "$choice" == "1" || "$choice" == "exec_demo" ]]; then
+    echo -e "${BLUE}💻 Demo 5: Suspicious Command Execution${NC}"
+    echo -e "${BLUE}=================================${NC}"
+    echo -e "${YELLOW}Scenario: Attacker runs known malicious tools${NC}"
+    show_alert_info "EXEC" "Suspicious command execution detected"
+    wait_for_demo
+    
+    echo -e "${RED}🔨 Executing: Known attack tools and techniques${NC}"
+    
+    # Execute various suspicious commands
+    echo -e "${RED}🔨 Running: nc (netcat) for reverse shell${NC}"
+    nc -h >/dev/null 2>&1 || echo -e "${YELLOW}⚠️ nc not available${NC}"
+    
+    echo -e "${RED}🔨 Running: wget to download payload${NC}"
+    wget --help >/dev/null 2>&1 || echo -e "${YELLOW}⚠️ wget not available${NC}"
+    
+    echo -e "${RED}🔨 Running: base64 for payload encoding${NC}"
+    echo "malicious_payload" | base64 >/dev/null 2>&1 || true
+    
+    echo -e "${RED}🔨 Running: curl to external C&C server${NC}"
+    curl --version >/dev/null 2>&1 || echo -e "${YELLOW}⚠️ curl not available${NC}"
+    
+    echo -e "${RED}🔨 Running: suspicious shell operations${NC}"
+    /bin/bash -c "echo 'This could be a reverse shell'" >/dev/null 2>&1 || true
+    
+    echo -e "${GREEN}✅ EXEC alerts should appear in Slack now!${NC}"
+    echo ""
+    sleep 3
+fi
 
-# Python reverse shell attempt (will fail but should trigger alert)
-echo "   Testing suspicious Python execution..."
-python3 -c "print('Simulated suspicious command')" 2>/dev/null || true
-echo -e "${GREEN}   ✅ Triggered: Python execution${NC}"
-sleep 2
+echo -e "${GREEN}🎉 Demo completed!${NC}"
+echo -e "${CYAN}Check your Slack #alert channel for the security alerts.${NC}"
+echo ""
+echo -e "${BLUE}💡 Pro Tips for Demo:${NC}"
+echo -e "  • Run each attack in sequence to show different threat types"
+echo -e "  • Explain the security context of each attack to audience"  
+echo -e "  • Show the Slack alerts appearing in real-time"
+echo -e "  • Demonstrate how RASP provides immediate threat detection"
+echo ""
 
-echo -e "${YELLOW}3. Sensitive File Access${NC}"
-echo "   Triggering: SSH key access (HIGH ALERT Expected)"
-sleep 2
+echo "🚨 RASP Security Demo - Generating Security Events"
+echo "================================================"
 
-# Access SSH keys (read-only, safe)
-sudo cat /etc/ssh/sshd_config | head -5 >/dev/null 2>&1 || true
-echo -e "${GREEN}   ✅ Triggered: SSH configuration access${NC}"
-
-# Try to access shadow file
-sudo ls -la /etc/shadow >/dev/null 2>&1 || true
-echo -e "${GREEN}   ✅ Triggered: Password shadow file access${NC}"
-sleep 2
-
-# =============================================================================
-# PHASE 2: NETWORK MONITORING
-# =============================================================================
+# Function to check if events are being generated
+check_events() {
+    echo "🔍 Checking recent security events..."
+    kubectl logs deployment/rasp-controller --tail=20 | grep -E "(CRITICAL|HIGH|security event detected)" | tail -5
+}
 
 echo ""
-echo -e "${PURPLE}📡 PHASE 2: NETWORK MONITORING${NC}"
-echo -e "${PURPLE}===============================${NC}"
-
-echo -e "${YELLOW}4. External Network Connections${NC}"
-echo "   Triggering: External IP connections (WARN/HIGH ALERT Expected)"
-sleep 2
-
-# Test external connections (safe - just connection attempts)
-echo "   Testing external HTTP connection..."
-curl -m 5 --connect-timeout 5 http://httpbin.org/ip >/dev/null 2>&1 || true
-echo -e "${GREEN}   ✅ Triggered: External HTTP connection${NC}"
-
-echo "   Testing DNS resolution..."
-nslookup google.com >/dev/null 2>&1 || true
-echo -e "${GREEN}   ✅ Triggered: DNS query${NC}"
-
-echo "   Testing suspicious port access..."
-# Try to connect to common suspicious ports
-timeout 3 bash -c 'echo >/dev/tcp/8.8.8.8/22' 2>/dev/null || true
-echo -e "${GREEN}   ✅ Triggered: SSH port connection attempt${NC}"
-sleep 2
-
-# =============================================================================
-# PHASE 3: PROCESS AND SYSTEM MONITORING  
-# =============================================================================
-
+echo "📋 Demo Events to Generate:"
+echo "1. File permission changes (chmod)"
+echo "2. Process execution events" 
+echo "3. Network connections"
+echo "4. Privilege escalation attempts"
 echo ""
-echo -e "${BLUE}🔍 PHASE 3: PROCESS AND SYSTEM MONITORING${NC}"
-echo -e "${BLUE}=========================================${NC}"
 
-echo -e "${YELLOW}5. Process Execution Monitoring${NC}"
-echo "   Triggering: Shell spawning and interpreters"
-sleep 2
-
-# Spawn various interpreters
-echo "   Testing shell execution..."
-bash -c 'echo "Shell command execution test"' >/dev/null
-echo -e "${GREEN}   ✅ Triggered: Bash execution${NC}"
-
-echo "   Testing script interpreter..."
-which python3 >/dev/null && python3 -c "import os; print('Python execution test')" >/dev/null 2>&1 || true
-echo -e "${GREEN}   ✅ Triggered: Python interpreter${NC}"
-
-which node >/dev/null && echo "console.log('Node test')" | node >/dev/null 2>&1 || echo -e "${YELLOW}   ⚠️  Node.js not available${NC}"
+echo "🎯 Step 1: File Permission Changes"
+kubectl exec -it demo-target -- bash -c "
+echo 'Creating files and changing permissions...'
+touch /tmp/demo-file-1
+chmod 777 /tmp/demo-file-1
+touch /tmp/demo-file-2  
+chmod 755 /tmp/demo-file-2
+touch /tmp/demo-file-3
+chmod 644 /tmp/demo-file-3
+echo 'File operations completed'
+"
 
 sleep 2
-
-echo -e "${YELLOW}6. File System Monitoring${NC}"
-echo "   Triggering: Various file operations"
-sleep 2
-
-# Create temp files and modify permissions
-TMP_FILE="/tmp/demo_security_test_$$"
-echo "Test file for security demo" > "$TMP_FILE"
-
-echo "   Testing file permission changes..."
-chmod 755 "$TMP_FILE"
-chmod 644 "$TMP_FILE"
-echo -e "${GREEN}   ✅ Triggered: File permission modifications${NC}"
-
-echo "   Testing file access patterns..."
-cat "$TMP_FILE" >/dev/null
-ls -la "$TMP_FILE" >/dev/null
-echo -e "${GREEN}   ✅ Triggered: File access operations${NC}"
-
-# Cleanup
-rm -f "$TMP_FILE"
-sleep 2
-
-# =============================================================================
-# PHASE 4: CONTAINER AND KUBERNETES SPECIFIC
-# =============================================================================
+check_events
 
 echo ""
-echo -e "${GREEN}🐳 PHASE 4: CONTAINER MONITORING${NC}"
-echo -e "${GREEN}================================${NC}"
+echo "🎯 Step 2: Process Execution Events"
+kubectl exec -it demo-target -- bash -c "
+echo 'Executing various commands...'
+whoami
+ps aux | head -5
+ls -la /tmp/
+cat /etc/passwd | head -5
+echo 'Command executions completed'
+"
 
-echo -e "${YELLOW}7. Container Runtime Operations${NC}"
-echo "   Triggering: Container-related commands"
-sleep 2
+sleep 2  
+check_events
 
-# Test container commands if available
-echo "   Testing container tools..."
-which docker >/dev/null 2>&1 && {
-    docker --version >/dev/null 2>&1 || true
-    echo -e "${GREEN}   ✅ Triggered: Docker command execution${NC}"
-} || echo -e "${YELLOW}   ⚠️  Docker not available${NC}"
-
-which kubectl >/dev/null 2>&1 && {
-    kubectl version --client >/dev/null 2>&1 || true
-    echo -e "${GREEN}   ✅ Triggered: Kubectl execution${NC}"
-} || echo -e "${YELLOW}   ⚠️  Kubectl not available${NC}"
-
-# Check for kubernetes files
-echo "   Testing Kubernetes file access..."
-ls /var/run/secrets/kubernetes.io/ >/dev/null 2>&1 && {
-    echo -e "${GREEN}   ✅ Triggered: Kubernetes secrets access${NC}"
-} || echo -e "${YELLOW}   ℹ️  No Kubernetes secrets found${NC}"
+echo ""
+echo "🎯 Step 3: Network Activity" 
+kubectl exec -it demo-target -- bash -c "
+echo 'Testing network connections...'
+curl -s http://httpbin.org/ip --connect-timeout 5 || echo 'Network request attempted'
+wget -q --timeout=5 --tries=1 http://example.com -O /dev/null || echo 'Download attempted'
+echo 'Network tests completed'
+"
 
 sleep 2
-
-# =============================================================================
-# FINAL PHASE: SUMMARY AND VERIFICATION
-# =============================================================================
+check_events
 
 echo ""
-echo -e "${BLUE}📊 DEMO COMPLETE - VERIFICATION${NC}"
-echo -e "${BLUE}===============================${NC}"
+echo "🎯 Step 4: File System Operations"
+kubectl exec -it demo-target -- bash -c "
+echo 'Creating and modifying files...'
+echo 'test content' > /tmp/demo-output.txt
+cat /tmp/demo-output.txt
+rm /tmp/demo-output.txt
+echo 'File system operations completed'
+"
 
-echo -e "${GREEN}✅ Demo script completed successfully!"
-echo ""
-echo -e "${YELLOW}Expected Alerts Generated:${NC}"
-echo -e "  🚨 CRITICAL: chmod 777 /etc/passwd"
-echo -e "  🚨 CRITICAL/HIGH: Suspicious command executions"
-echo -e "  ⚠️  HIGH: Sensitive file access (/etc/shadow, /etc/ssh/)"
-echo -e "  ⚠️  WARN/HIGH: External network connections"
-echo -e "  ℹ️  Various: Process executions and file operations"
-echo ""
-echo -e "${GREEN}Next Steps for Your Viva:${NC}"
-echo -e "  1. 💬 Check your Slack channel for security alerts"
-echo -e "  2. 📊 Open Kibana/OpenSearch dashboards" 
-echo -e "  3. 🔍 Show real-time event filtering and search"
-echo -e "  4. 📈 Demonstrate alert aggregation and rate limiting"
-echo -e "  5. 🛡️  Explain the different severity levels"
-echo ""
-echo -e "${PURPLE}🎯 Pro Tips for Demo:${NC}"
-echo -e "  • Run this script in a monitored pod/container"
-echo -e "  • Show both agent logs and controller logs"
-echo -e "  • Demonstrate rule customization capabilities"
-echo -e "  • Highlight the low-overhead eBPF monitoring"
-echo -e "  • Explain the Kubernetes-native deployment"
-echo ""
-echo -e "${GREEN}🎉 Good luck with your viva presentation!${NC}"
-
-# Cleanup any demo artifacts
-sudo rm -f /etc/passwd.backup.demo 2>/dev/null || true
+sleep 2
+check_events
 
 echo ""
-echo -e "${BLUE}Demo script finished. Check your monitoring systems now!${NC}" 
+echo "📊 Final Security Event Summary:"
+echo "================================="
+kubectl logs deployment/rasp-controller --tail=50 | grep -E "(security event detected|CRITICAL|HIGH|chmod|exec)" | tail -10
+
+echo ""
+echo "✅ Demo Complete! Check the controller logs for security events."
+echo "📋 To see all recent events:"
+echo "   kubectl logs deployment/rasp-controller --tail=100" 
