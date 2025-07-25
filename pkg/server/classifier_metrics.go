@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"pod-controller/pkg/classifier"
+	"pod-controller/pkg/common"
 	pb "pod-controller/pkg/telemetry"
 )
 
@@ -15,7 +15,7 @@ type ClassifierMetrics struct {
 
 	// Event classification metrics
 	totalEvents      int64
-	eventsBySeverity map[classifier.Severity]int64
+	eventsBySeverity map[common.Severity]int64
 	eventsByType     map[pb.EventType]int64
 	validationErrors int64
 	skippedEvents    int64
@@ -38,14 +38,14 @@ type ClassifierMetrics struct {
 // newClassifierMetrics creates a new metrics instance
 func newClassifierMetrics() *ClassifierMetrics {
 	return &ClassifierMetrics{
-		eventsBySeverity: make(map[classifier.Severity]int64),
+		eventsBySeverity: make(map[common.Severity]int64),
 		eventsByType:     make(map[pb.EventType]int64),
 		startTime:        time.Now(),
 	}
 }
 
 // recordClassification records a successful classification
-func (m *ClassifierMetrics) recordClassification(eventType pb.EventType, severity classifier.Severity, duration time.Duration) {
+func (m *ClassifierMetrics) recordClassification(eventType pb.EventType, severity common.Severity, duration time.Duration) {
 	atomic.AddInt64(&m.totalEvents, 1)
 	atomic.AddInt64(&m.classificationCount, 1)
 	atomic.AddInt64((*int64)(&m.totalClassificationTime), int64(duration))
@@ -184,7 +184,7 @@ func (m *ClassifierMetrics) Reset() {
 	atomic.StoreInt64(&m.successfulReloads, 0)
 	atomic.StoreInt64(&m.failedReloads, 0)
 
-	m.eventsBySeverity = make(map[classifier.Severity]int64)
+	m.eventsBySeverity = make(map[common.Severity]int64)
 	m.eventsByType = make(map[pb.EventType]int64)
 	m.avgClassificationTime = 0
 	m.totalClassificationTime = 0

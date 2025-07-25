@@ -8,7 +8,7 @@ import (
 
 // EventClassifierInterface defines the interface for event classification
 type EventClassifierInterface interface {
-	ClassifyEvent(event *pb.SecurityEvent) (Severity, string)
+	ClassifyEvent(event *pb.SecurityEvent) (common.Severity, string)
 }
 
 // Note: ThreatDetectorInterface is already defined in classifier.go
@@ -33,10 +33,19 @@ type ExtendedClassifierInterface interface {
 	IsExternalIP(ip string) bool
 }
 
+// EnhancedClassifierInterface provides complete classification results
+type EnhancedClassifierInterface interface {
+	ClassifyEventEnhanced(event *pb.SecurityEvent) (*common.ClassificationResult, error)
+	ReloadAllRules() error
+	GetClassificationMetrics() map[string]interface{}
+	SetThresholds(thresholds map[string]float64) error
+}
+
 // ClassifierType represents the type of classifier to use
 type ClassifierType string
 
 const (
+
 	ClassifierTypeDefault ClassifierType = "default"
 	ClassifierTypeYAML    ClassifierType = "yaml"
 	ClassifierTypeCVE     ClassifierType = "cve"

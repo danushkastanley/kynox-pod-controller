@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"pod-controller/pkg/classifier"
+	"pod-controller/pkg/common"
 	pb "pod-controller/pkg/telemetry"
 
 	"github.com/sirupsen/logrus"
@@ -118,12 +118,12 @@ func (re *RuleEngine) compilePatterns(rules *SecurityRules) error {
 }
 
 // EvaluateEvent evaluates a security event against the loaded rules
-func (re *RuleEngine) EvaluateEvent(event *pb.SecurityEvent) (classifier.Severity, string) {
+func (re *RuleEngine) EvaluateEvent(event *pb.SecurityEvent) (common.Severity, string) {
 	re.mu.RLock()
 	defer re.mu.RUnlock()
 
 	if re.rules == nil {
-		return classifier.SeverityLow, "No rules loaded"
+		return common.SeverityLow, "No rules loaded"
 	}
 
 	// Create evaluation context
@@ -133,7 +133,7 @@ func (re *RuleEngine) EvaluateEvent(event *pb.SecurityEvent) (classifier.Severit
 	eventTypeName := pb.EventType_name[int32(event.EventType)]
 	if eventConfig, exists := re.rules.EventTypes[eventTypeName]; exists {
 		if !eventConfig.Enabled {
-			return classifier.SeverityLow, "Event type disabled"
+			return common.SeverityLow, "Event type disabled"
 		}
 	}
 
@@ -192,12 +192,12 @@ func (re *RuleEngine) createEvaluationContext(event *pb.SecurityEvent) *RuleEval
 }
 
 // evaluateExecEvent evaluates process execution events
-func (re *RuleEngine) evaluateExecEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateExecEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	command := strings.ToLower(strings.TrimSpace(event.Command))
 
 	// Check if process is trusted first
 	if re.isTrustedProcess(command) {
-		return classifier.SeverityLow, "Trusted process execution"
+		return common.SeverityLow, "Trusted process execution"
 	}
 
 	// Check suspicious commands
@@ -212,13 +212,13 @@ func (re *RuleEngine) evaluateExecEvent(event *pb.SecurityEvent, ctx *RuleEvalua
 }
 
 // evaluateFileEvent evaluates file access events
-func (re *RuleEngine) evaluateFileEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateFileEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	filePath := event.FilePath
 
 	// Check trusted processes accessing common monitoring paths
 	if (strings.HasPrefix(filePath, "/proc/") || strings.HasPrefix(filePath, "/sys/")) &&
 		re.isTrustedProcess(ctx.Command) {
-		return classifier.SeverityLow, "Legitimate system monitoring"
+		return common.SeverityLow, "Legitimate system monitoring"
 	}
 
 	// Check sensitive files
@@ -239,48 +239,48 @@ func (re *RuleEngine) evaluateFileEvent(event *pb.SecurityEvent, ctx *RuleEvalua
 }
 
 // evaluateNetworkEvent evaluates network connection events
-func (re *RuleEngine) evaluateNetworkEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateNetworkEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	// Check for external connections
 	if ctx.ExternalNetwork {
 		if ctx.IsRoot && !re.isTrustedProcess(ctx.Command) {
-			return classifier.SeverityCritical, "Root process connecting to external IP"
+			return common.SeverityCritical, "Root process connecting to external IP"
 		}
 		if re.isSuspiciousCommand(ctx.Command) {
-			return classifier.SeverityHigh, "Suspicious command connecting to external IP"
+			return common.SeverityHigh, "Suspicious command connecting to external IP"
 		}
-		return classifier.SeverityWarn, "External network connection detected"
+		return common.SeverityWarn, "External network connection detected"
 	}
 
 	// Check suspicious ports
 	for _, rule := range re.rules.Network.SuspiciousPorts {
 		if re.containsPort(rule.Ports, int(ctx.DestinationPort)) {
 			severity := re.evaluateNetworkConditions(rule.Conditions, ctx, ParseSeverity(rule.Severity))
-			return severity.ToClassifierSeverity(), fmt.Sprintf("Connection to suspicious port %d (%s)", ctx.DestinationPort, rule.Name)
+			return severity.ToCommonSeverity(), fmt.Sprintf("Connection to suspicious port %d (%s)", ctx.DestinationPort, rule.Name)
 		}
 	}
 
 	// Check for suspicious commands doing network activity
 	if re.isSuspiciousCommand(ctx.Command) {
 		if ctx.IsRoot {
-			return classifier.SeverityCritical, "Suspicious network activity from root process"
+			return common.SeverityCritical, "Suspicious network activity from root process"
 		}
-		return classifier.SeverityHigh, "Suspicious network activity detected"
+		return common.SeverityHigh, "Suspicious network activity detected"
 	}
 
 	return re.getDefaultSeverity("CONNECT"), "Network connection"
 }
 
 // evaluateChmodEvent evaluates file permission change events
-func (re *RuleEngine) evaluateChmodEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateChmodEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	mode := event.Mode
 	filePath := event.FilePath
 
 	// Check if target is a sensitive file/directory
 	if re.isSensitivePath(filePath) {
 		if !re.isTrustedProcess(ctx.Command) {
-			return classifier.SeverityCritical, "Permission change on sensitive file"
+			return common.SeverityCritical, "Permission change on sensitive file"
 		}
-		return classifier.SeverityWarn, "Legitimate permission change"
+		return common.SeverityWarn, "Legitimate permission change"
 	}
 
 	// Check for world-writable permissions
@@ -290,9 +290,9 @@ func (re *RuleEngine) evaluateChmodEvent(event *pb.SecurityEvent, ctx *RuleEvalu
 		if perms == 0777 || strings.HasPrefix(filePath, "/etc/") ||
 			strings.HasPrefix(filePath, "/usr/") || strings.HasPrefix(filePath, "/bin/") {
 			if ctx.IsRoot && !re.isTrustedProcess(ctx.Command) {
-				return classifier.SeverityCritical, "Dangerous permission change detected"
+				return common.SeverityCritical, "Dangerous permission change detected"
 			}
-			return classifier.SeverityHigh, "World-writable permission set"
+			return common.SeverityHigh, "World-writable permission set"
 		}
 	}
 
@@ -300,55 +300,55 @@ func (re *RuleEngine) evaluateChmodEvent(event *pb.SecurityEvent, ctx *RuleEvalu
 }
 
 // evaluatePrivilegeEvent evaluates privilege escalation events
-func (re *RuleEngine) evaluatePrivilegeEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluatePrivilegeEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	if !re.isTrustedProcess(ctx.Command) {
-		return classifier.SeverityCritical, "Privilege escalation detected"
+		return common.SeverityCritical, "Privilege escalation detected"
 	}
-	return classifier.SeverityLow, "Legitimate privilege operation"
+	return common.SeverityLow, "Legitimate privilege operation"
 }
 
 // evaluatePtraceEvent evaluates ptrace events
-func (re *RuleEngine) evaluatePtraceEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluatePtraceEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	if !re.isTrustedProcess(ctx.Command) {
 		if ctx.IsRoot {
-			return classifier.SeverityCritical, "Root process debugging attempt detected"
+			return common.SeverityCritical, "Root process debugging attempt detected"
 		}
-		return classifier.SeverityHigh, "Process debugging attempt detected"
+		return common.SeverityHigh, "Process debugging attempt detected"
 	}
-	return classifier.SeverityLow, "Legitimate debug operation"
+	return common.SeverityLow, "Legitimate debug operation"
 }
 
 // evaluateMountEvent evaluates mount/umount events
-func (re *RuleEngine) evaluateMountEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateMountEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	if re.isSensitivePath(ctx.FilePath) {
 		if !re.isTrustedProcess(ctx.Command) {
-			return classifier.SeverityCritical, "Sensitive filesystem mount detected"
+			return common.SeverityCritical, "Sensitive filesystem mount detected"
 		}
-		return classifier.SeverityLow, "Legitimate mount operation"
+		return common.SeverityLow, "Legitimate mount operation"
 	}
-	return classifier.SeverityWarn, "Filesystem mount operation"
+	return common.SeverityWarn, "Filesystem mount operation"
 }
 
 // evaluateCapsetEvent evaluates capability set events
-func (re *RuleEngine) evaluateCapsetEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateCapsetEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	if !re.isTrustedProcess(ctx.Command) {
-		return classifier.SeverityCritical, "Capability modification detected"
+		return common.SeverityCritical, "Capability modification detected"
 	}
-	return classifier.SeverityLow, "Legitimate capability operation"
+	return common.SeverityLow, "Legitimate capability operation"
 }
 
 // evaluateSecurityEvent evaluates eBPF and seccomp events
-func (re *RuleEngine) evaluateSecurityEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (classifier.Severity, string) {
+func (re *RuleEngine) evaluateSecurityEvent(event *pb.SecurityEvent, ctx *RuleEvaluationContext) (common.Severity, string) {
 	if !re.isTrustedProcess(ctx.Command) {
-		return classifier.SeverityCritical, "Security mechanism modification detected"
+		return common.SeverityCritical, "Security mechanism modification detected"
 	}
-	return classifier.SeverityLow, "Legitimate security operation"
+	return common.SeverityLow, "Legitimate security operation"
 }
 
 // Helper methods
 
 // evaluateCommandRule evaluates a command rule against a command
-func (re *RuleEngine) evaluateCommandRule(rule CommandRule, command string, ctx *RuleEvaluationContext) (classifier.Severity, string, bool) {
+func (re *RuleEngine) evaluateCommandRule(rule CommandRule, command string, ctx *RuleEvaluationContext) (common.Severity, string, bool) {
 	// Check if command matches any pattern
 	matched := false
 	for _, pattern := range rule.Patterns {
@@ -359,7 +359,7 @@ func (re *RuleEngine) evaluateCommandRule(rule CommandRule, command string, ctx 
 	}
 
 	if !matched {
-		return classifier.SeverityLow, "", false
+		return common.SeverityLow, "", false
 	}
 
 	// Apply base severity
@@ -369,21 +369,21 @@ func (re *RuleEngine) evaluateCommandRule(rule CommandRule, command string, ctx 
 	for _, condition := range rule.Conditions {
 		if re.matchesCondition(condition, ctx) {
 			if condition.Severity != "" {
-				return ParseSeverity(condition.Severity).ToClassifierSeverity(),
+				return ParseSeverity(condition.Severity).ToCommonSeverity(),
 					fmt.Sprintf("%s command execution (%s)", rule.Name, condition.Severity), true
 			}
 			if condition.EscalateSeverity != "" {
-				return ParseSeverity(condition.EscalateSeverity).ToClassifierSeverity(),
+				return ParseSeverity(condition.EscalateSeverity).ToCommonSeverity(),
 					fmt.Sprintf("%s command execution (escalated)", rule.Name), true
 			}
 		}
 	}
 
-	return baseSeverity.ToClassifierSeverity(), fmt.Sprintf("%s command execution", rule.Name), true
+	return baseSeverity.ToCommonSeverity(), fmt.Sprintf("%s command execution", rule.Name), true
 }
 
 // evaluateFileRule evaluates a file rule against a file path
-func (re *RuleEngine) evaluateFileRule(rule FileRule, filePath string, ctx *RuleEvaluationContext) (classifier.Severity, string, bool) {
+func (re *RuleEngine) evaluateFileRule(rule FileRule, filePath string, ctx *RuleEvaluationContext) (common.Severity, string, bool) {
 	// Check if file path matches any pattern
 	matched := false
 	for _, path := range rule.Paths {
@@ -394,7 +394,7 @@ func (re *RuleEngine) evaluateFileRule(rule FileRule, filePath string, ctx *Rule
 	}
 
 	if !matched {
-		return classifier.SeverityLow, "", false
+		return common.SeverityLow, "", false
 	}
 
 	// Apply base severity
@@ -404,13 +404,13 @@ func (re *RuleEngine) evaluateFileRule(rule FileRule, filePath string, ctx *Rule
 	for _, condition := range rule.Conditions {
 		if re.matchesFileCondition(condition, ctx) {
 			if condition.Severity != "" {
-				return ParseSeverity(condition.Severity).ToClassifierSeverity(),
+				return ParseSeverity(condition.Severity).ToCommonSeverity(),
 					fmt.Sprintf("%s file access (%s)", rule.Name, condition.Severity), true
 			}
 		}
 	}
 
-	return baseSeverity.ToClassifierSeverity(), fmt.Sprintf("%s file access", rule.Name), true
+	return baseSeverity.ToCommonSeverity(), fmt.Sprintf("%s file access", rule.Name), true
 }
 
 // evaluateNetworkConditions evaluates network conditions
@@ -564,11 +564,11 @@ func (re *RuleEngine) containsPort(ports []int, port int) bool {
 }
 
 // getDefaultSeverity gets the default severity for an event type
-func (re *RuleEngine) getDefaultSeverity(eventType string) classifier.Severity {
+func (re *RuleEngine) getDefaultSeverity(eventType string) common.Severity {
 	if config, exists := re.rules.EventTypes[eventType]; exists {
-		return ParseSeverity(config.DefaultSeverity).ToClassifierSeverity()
+		return ParseSeverity(config.DefaultSeverity).ToCommonSeverity()
 	}
-	return ParseSeverity(re.rules.Global.DefaultSeverity).ToClassifierSeverity()
+	return ParseSeverity(re.rules.Global.DefaultSeverity).ToCommonSeverity()
 }
 
 // GetRulesInfo returns information about the loaded rules
