@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"pod-controller/pkg/classifier"
+	"pod-controller/pkg/common"
 	"pod-controller/pkg/rules"
 	pb "pod-controller/pkg/telemetry"
 
@@ -76,20 +77,20 @@ type EnhancedYAMLClassifier struct {
 var _ classifier.EventClassifierInterface = (*EnhancedYAMLClassifier)(nil)
 
 // ClassifyEvent implements sophisticated event classification with metrics and validation
-func (e *EnhancedYAMLClassifier) ClassifyEvent(event *pb.SecurityEvent) (classifier.Severity, string) {
+func (e *EnhancedYAMLClassifier) ClassifyEvent(event *pb.SecurityEvent) (common.Severity, string) {
 	startTime := time.Now()
 
 	// Pre-classification validation
 	if err := e.yamlClassifier.ValidateEvent(event); err != nil {
 		e.metrics.recordValidationError()
 		logrus.WithError(err).WithField("event_type", event.EventType).Warn("Event validation failed")
-		return classifier.SeverityLow, fmt.Sprintf("Invalid event: %v", err)
+		return common.SeverityLow, fmt.Sprintf("Invalid event: %v", err)
 	}
 
 	// Check if event type is enabled
 	if !e.yamlClassifier.IsEventTypeEnabled(event.EventType) {
 		e.metrics.recordSkippedEvent(event.EventType)
-		return classifier.SeverityLow, "Event type disabled by rules"
+		return common.SeverityLow, "Event type disabled by rules"
 	}
 
 	// Enrich event context before classification

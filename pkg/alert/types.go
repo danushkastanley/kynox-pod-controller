@@ -2,6 +2,8 @@ package alert
 
 import (
 	"time"
+
+	"pod-controller/pkg/common"
 )
 
 // AlertLevel represents the severity of an alert
@@ -35,6 +37,12 @@ type Alert struct {
 	FileInfo         map[string]string `json:"file_info,omitempty"`
 	SecurityInfo     map[string]string `json:"security_info,omitempty"`
 	ContainerContext map[string]string `json:"container_context,omitempty"`
+
+	// CVE and MITRE ATT&CK Classification
+	AttackTechniques []common.AttackTechnique `json:"attack_techniques,omitempty"`
+	CVEReferences    []common.CVEReference    `json:"cve_references,omitempty"`
+	ThreatIntel      *common.ThreatIntel      `json:"threat_intel,omitempty"`
+	Classifications  []common.Classification  `json:"classifications,omitempty"`
 }
 
 // AlertNotifier interface for different notification methods

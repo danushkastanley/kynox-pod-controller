@@ -24,7 +24,8 @@ func NewAlertDispatcher() (*AlertDispatcher, error) {
 	err := godotenv.Load()
 	if err != nil {
 		log.Printf("⚠️  Failed to load .env file: %v", err)
-		return nil, fmt.Errorf("failed to load .env file: %v", err)
+		// Don't fail in test environment - just continue with environment variables
+		log.Println("ℹ️  Continuing without .env file - using environment variables")
 	}
 	log.Println("✅ .env file loaded successfully")
 
