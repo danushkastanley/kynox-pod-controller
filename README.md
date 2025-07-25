@@ -2,7 +2,7 @@
 
 A Kubernetes-native Runtime Application Self-Protection (RASP) controller that provides real-time security monitoring, threat detection, and incident response for containerized applications. The controller processes security events from eBPF-based agents and provides intelligent threat analysis with configurable alerting.
 
-## 🔧 Features
+## FEATURES
 
 ### Real-time Security Event Processing
 - **Stream Processing**: High-throughput gRPC event streaming from distributed agents
@@ -36,7 +36,7 @@ A Kubernetes-native Runtime Application Self-Protection (RASP) controller that p
 - **ConfigMap Configuration**: Cloud-native configuration management
 - **Health Monitoring**: Comprehensive health checks and observability
 
-## 🏗️ Architecture
+## ARCHITECTURE
 
 ```
 pod-controller/
@@ -93,7 +93,7 @@ pod-controller/
 - **Message Formatting**: Rich alert messages with comprehensive context
 - **Delivery Tracking**: Ensures reliable alert delivery with retry mechanisms
 
-## 🚀 Prerequisites
+## PREREQUISITES
 
 ### System Requirements
 - **Kubernetes Cluster**: Any supported Kubernetes version
@@ -104,7 +104,7 @@ pod-controller/
 - **gRPC Port**: Port 50051 for agent communication
 - **Outbound Connectivity**: Internet access for Slack/webhook notifications (optional)
 
-## 🔨 Building
+## BUILDING
 
 ### Using Docker (Recommended)
 
@@ -131,7 +131,7 @@ go build -o bin/controller cmd/controller/main.go
 protoc --go_out=. --go-grpc_out=. pkg/telemetry/telemetry.proto
 ```
 
-## 📦 Deployment
+## DEPLOYMENT
 
 ### Kubernetes Deployment
 
@@ -158,7 +158,7 @@ protoc --go_out=. --go-grpc_out=. pkg/telemetry/telemetry.proto
 ./redeploy_pod_controller.sh
 ```
 
-## ⚙️ Configuration
+## CONFIGURATION
 
 ### Environment Variables
 
@@ -203,7 +203,7 @@ data:
     ALERT_RATE_LIMIT=10
 ```
 
-## 📊 Monitored Event Types
+## MONITORED EVENT TYPES
 
 ### Process Events
 - **EXEC**: Process execution with command-line analysis
@@ -227,7 +227,7 @@ data:
 - **BPF_PROG**: eBPF program loading
 - **SECCOMP**: Syscall filtering changes
 
-## 🚨 Threat Detection Capabilities
+## THREAT DETECTION CAPABILITIES
 
 ### Critical Threats (Immediate Response)
 - **Privilege Escalation**: Unauthorized `setuid` operations by non-system processes
@@ -253,7 +253,7 @@ data:
 - **Behavioral Patterns**: Tracks process spawning and network connection patterns
 - **Privilege Analysis**: Evaluates event severity based on process privileges
 
-## 📈 Performance & Scalability
+## PERFORMANCE & SCALABILITY
 
 ### Resource Requirements
 - **CPU**: 100-500m per controller instance
@@ -272,7 +272,7 @@ data:
 - **Connection Pooling**: Optimized agent connection management
 - **Memory Management**: Efficient Go garbage collection tuning
 
-## 🔍 Observability & Monitoring
+## OBSERVABILITY & MONITORING
 
 ### Health Checks
 - **Startup Probe**: Verifies controller initialization
@@ -295,7 +295,7 @@ The controller provides detailed logging for:
 - Threat detection counts
 - Alert delivery status
 
-## 🔧 API Reference
+## API REFERENCE
 
 ### gRPC Service Definition
 
@@ -341,7 +341,7 @@ message SecurityEvent {
 }
 ```
 
-## 🛠️ Development
+## DEVELOPMENT
 
 ### Local Development Setup
 
@@ -392,7 +392,7 @@ export LOG_LEVEL=debug
 kubectl logs -f deployment/rasp-controller | grep -i debug
 ```
 
-## 🚨 Alert Examples
+## ALERT EXAMPLES
 
 ### Critical Alert - Privilege Escalation
 ```json
@@ -428,7 +428,7 @@ kubectl logs -f deployment/rasp-controller | grep -i debug
 }
 ```
 
-## 🤝 Contributing
+## CONTRIBUTING
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -442,7 +442,7 @@ kubectl logs -f deployment/rasp-controller | grep -i debug
 - Update documentation for API changes
 - Ensure proper error handling and logging
 
-## 📄 License
+## LICENSE
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 

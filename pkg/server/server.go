@@ -129,7 +129,7 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 
 func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	if req.AgentId == "" {
-		logrus.Printf("❌ Connection rejected: missing agent_id")
+		logrus.Printf("[ERROR] Connection rejected: missing agent_id")
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
@@ -153,9 +153,9 @@ func (s *TelemetryServer) ConnectAgent(ctx context.Context, req *pb.ConnectReque
 	s.mu.Lock()
 	// Check if agent already exists
 	if existingAgent, exists := s.agents[req.AgentId]; exists {
-		logrus.Printf("⚠️  Agent %s reconnecting from %s (old session: %s)", req.AgentId, clientAddr, existingAgent.SessionID)
+		logrus.Printf("[WARN] Agent %s reconnecting from %s (old session: %s)", req.AgentId, clientAddr, existingAgent.SessionID)
 	} else {
-		logrus.Printf("✅ New agent connecting from %s:", clientAddr)
+		logrus.Printf("[OK] New agent connecting from %s:", clientAddr)
 		logrus.Printf("   Agent ID: %s", req.AgentId)
 		logrus.Printf("   Node: %s", req.NodeName)
 		logrus.Printf("   Pod: %s", req.PodName)
@@ -174,7 +174,7 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 	agent, exists := s.agents[req.AgentId]
 	if !exists {
 		s.mu.Unlock()
-		logrus.Printf("❌ Heartbeat failed: unknown agent %s", req.AgentId)
+		logrus.Printf("[ERROR] Heartbeat failed: unknown agent %s", req.AgentId)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
 			AgentId:      req.AgentId,
@@ -184,7 +184,7 @@ func (s *TelemetryServer) SendHeartbeat(ctx context.Context, req *pb.Heartbeat) 
 
 	if agent.SessionID != req.SessionId {
 		s.mu.Unlock()
-		logrus.Printf("❌ Heartbeat failed: invalid session for agent %s (got: %s, want: %s)",
+		logrus.Printf("[ERROR] Heartbeat failed: invalid session for agent %s (got: %s, want: %s)",
 			req.AgentId, req.SessionId, agent.SessionID)
 		return &pb.ConnectionStatus{
 			Status:       pb.ConnectionStatus_ERROR,
@@ -226,7 +226,7 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 		return status.Error(codes.FailedPrecondition, "agent not connected")
 	}
 
-	logrus.Printf("🔄 Started event stream for agent %s (node: %s, pod: %s)",
+	logrus.Printf("[START] Started event stream for agent %s (node: %s, pod: %s)",
 		agent.AgentID, agent.NodeName, agent.PodName)
 
 	// Process the first event
@@ -249,7 +249,7 @@ func (s *TelemetryServer) StreamEvents(stream pb.TelemetryService_StreamEventsSe
 		event, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
-				logrus.Printf("📡 Event stream closed for agent %s", agent.AgentID)
+				logrus.Printf("[CLOSED] Event stream closed for agent %s", agent.AgentID)
 				return nil
 			}
 			return err
@@ -389,15 +389,15 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	// Log the event with appropriate level based on severity
 	switch severity {
 	case classifier.SeverityCritical:
-		logrus.WithFields(fields).Error("🚨 Critical security event detected")
+		logrus.WithFields(fields).Error("[CRITICAL] Critical security event detected")
 	case classifier.SeverityHigh:
-		logrus.WithFields(fields).Error("⚠️  High severity security event detected")
+		logrus.WithFields(fields).Error("[HIGH] High severity security event detected")
 	case classifier.SeverityWarn:
-		logrus.WithFields(fields).Warn("⚠️  Medium severity security event detected")
+		logrus.WithFields(fields).Warn("[WARN] Medium severity security event detected")
 	case classifier.SeverityLow:
-		logrus.WithFields(fields).Info("ℹ️  Low severity security event detected")
+		logrus.WithFields(fields).Info("[LOW] Low severity security event detected")
 	default:
-		logrus.WithFields(fields).Debug("🔍 Security event detected")
+		logrus.WithFields(fields).Debug("[DEBUG] Security event detected")
 	}
 
 	// Update metrics
@@ -440,7 +440,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		"should_alert": shouldAlert,
 		"event_type":   alertKey.EventType,
 		"severity":     alertKey.Severity,
-	}).Info("🔍 Alert aggregation check")
+	}).Info("[CHECK] Alert aggregation check")
 
 	if shouldAlert {
 		// CRITICAL alerts bypass rate limiting for immediate response
@@ -450,21 +450,21 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 			logrus.WithFields(logrus.Fields{
 				"rate_limit_allowed": allowedByRateLimit,
 				"bypass_reason":      "CRITICAL severity bypasses rate limit",
-			}).Info("🔍 Rate limit check")
+			}).Info("[CHECK] Rate limit check")
 		} else {
 			// Apply rate limiting to non-critical events
 			allowedByRateLimit = s.alertLimiter.Allow()
 			logrus.WithFields(logrus.Fields{
 				"rate_limit_allowed": allowedByRateLimit,
 				"severity":           severity,
-			}).Info("🔍 Rate limit check")
+			}).Info("[CHECK] Rate limit check")
 		}
 
 		if allowedByRateLimit {
 			logrus.WithFields(logrus.Fields{
 				"alert_level": s.getAlertLevel(severity),
 				"title":       fmt.Sprintf("%s Security Event", severity),
-			}).Info("📤 Preparing to send alert...")
+			}).Info("[SEND] Preparing to send alert...")
 
 			// Create container context for alert with both agent and target info
 			alertContainerContext := map[string]string{
@@ -475,7 +475,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 				"target_container_id": containerId,
 			}
 
-			logrus.Info("🚀 About to call alerter.Dispatch()...")
+			logrus.Info("[START] About to call alerter.Dispatch()...")
 
 			if err := s.alerter.Dispatch(&alert.Alert{
 				Level:     s.getAlertLevel(severity),
@@ -539,7 +539,7 @@ func (s *TelemetryServer) CleanupInactiveAgents() {
 		s.mu.Lock()
 		for id, agent := range s.agents {
 			if now.Sub(agent.LastSeen) > s.timeout {
-				logrus.Printf("⚠️  Removing inactive agent %s (node: %s, pod: %s, last seen: %s ago)",
+				logrus.Printf("[WARN] Removing inactive agent %s (node: %s, pod: %s, last seen: %s ago)",
 					id, agent.NodeName, agent.PodName, now.Sub(agent.LastSeen).Round(time.Second))
 				delete(s.agents, id)
 			}

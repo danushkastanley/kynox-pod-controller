@@ -2,7 +2,7 @@
 
 This directory contains Helm values files for deploying the RASP monitoring stack components. These configuration files are used by the `automate-logging.sh` script to deploy a comprehensive observability solution for your RASP system.
 
-## 📁 Configuration Files
+## CONFIGURATION FILES
 
 ### 1. `prometheus-values.yaml`
 **Purpose**: Prometheus metrics collection and alerting configuration
@@ -80,7 +80,7 @@ resources:
     memory: 256Mi # Increase for large log buffers
 ```
 
-## 🛠️ Environment-Specific Configurations
+## ENVIRONMENT-SPECIFIC CONFIGURATIONS
 
 ### Development Environment
 - Use the default configurations as provided
@@ -138,7 +138,7 @@ serverFiles:
         replica: '{{ .Pod.Name }}'
 ```
 
-## 🔧 Customizing for Your Environment
+## CUSTOMIZING FOR YOUR ENVIRONMENT
 
 ### 1. RASP Service Configuration
 Update the RASP controller service name and namespace in `prometheus-values.yaml`:
@@ -179,7 +179,7 @@ alerting_rules.yml:
             summary: "Your custom alert description"
 ```
 
-## 📊 Metrics and Dashboards
+## METRICS AND DASHBOARDS
 
 ### Available RASP Metrics
 The configuration automatically collects these metrics from your RASP controller:
@@ -199,7 +199,7 @@ The included dashboard provides:
 4. **Performance**: Processing latency and resource usage
 5. **Agent Health**: Connection status and event forwarding rates
 
-## 🚀 Deployment
+## DEPLOYMENT
 
 To use these configurations:
 
@@ -225,7 +225,7 @@ vim configs/fluent-bit-values.yaml
 ./access-monitoring.sh
 ```
 
-## 🔍 Troubleshooting
+## TROUBLESHOOTING
 
 ### Common Issues
 
@@ -256,7 +256,7 @@ kubectl get pods -n logging
 # Adjust resource limits in configuration files if needed
 ```
 
-## 📚 Additional Resources
+## ADDITIONAL RESOURCES
 
 - [Prometheus Configuration](https://prometheus.io/docs/prometheus/latest/configuration/configuration/)
 - [Grafana Provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
