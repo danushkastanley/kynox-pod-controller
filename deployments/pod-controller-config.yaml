@@ -11,15 +11,25 @@ data:
     LOG_LEVEL=debug
     DEBUG=debug  # Set to 'debug' for verbose logging
 
+    # Classifier Configuration
+    CLASSIFIER_TYPE=yaml  # Options: default, yaml, cve
+    RULES_PATH=rules/default-rules.yaml
+    
+    # CVE Classifier Configuration (used when CLASSIFIER_TYPE=cve)
+    CVE_DATA_PATH=data/cve-database.json
+    CVE_API_KEY=
+    CVE_API_ENDPOINT=https://services.nvd.nist.gov/rest/json/cves/2.0
+    CVE_UPDATE_INTERVAL=24h
+
     # Alert Configuration
-    # Slack Integration (disabled due to message limits)
-    # SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
-    # SLACK_CHANNEL=#alert
+    # Slack Integration
+    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
+    SLACK_CHANNEL=#alert
 
     # Generic Webhook Integration
     ALERT_WEBHOOK_URL=
 
-    # Alert Filtering
-    ALERT_EVENT_TYPES=exec,setuid,mount,open
-    ALERT_MIN_LEVEL=critical
-    ALERT_RATE_LIMIT=60
+    # Alert Filtering - DEMO MODE (controllable events only)
+    ALERT_EVENT_TYPES=CHMOD,SETUID,PTRACE,MOUNT,EXEC
+    ALERT_MIN_LEVEL=info
+    ALERT_RATE_LIMIT=30

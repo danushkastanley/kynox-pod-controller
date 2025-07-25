@@ -74,23 +74,45 @@ func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	// Create threat detector
 	threatDetector := NewThreatDetector()
 
-	// Create advanced YAML-based classifier
-	rulesPath := os.Getenv("RULES_PATH")
-	if rulesPath == "" {
-		rulesPath = "rules/default-rules.yaml" // Default fallback
+	// Load classifier configuration from environment
+	classifierType := classifier.ClassifierType(getEnvWithDefault("CLASSIFIER_TYPE", "yaml"))
+	rulesPath := getEnvWithDefault("RULES_PATH", "rules/default-rules.yaml")
+	cveDataPath := getEnvWithDefault("CVE_DATA_PATH", "data/cve-database.json")
+	cveAPIKey := os.Getenv("CVE_API_KEY")
+	cveAPIEndpoint := getEnvWithDefault("CVE_API_ENDPOINT", "https://services.nvd.nist.gov/rest/json/cves/2.0")
+
+	// Parse CVE update interval
+	cveUpdateInterval := 24 * time.Hour // default
+	if intervalStr := os.Getenv("CVE_UPDATE_INTERVAL"); intervalStr != "" {
+		if parsed, err := time.ParseDuration(intervalStr); err == nil {
+			cveUpdateInterval = parsed
+		}
 	}
 
-	classifierConfig := &ClassifierConfig{
-		RulesPath:       rulesPath,
-		EnableHotReload: true,
-		ValidateRules:   true,
-		MetricsEnabled:  true,
+	// Create classifier configuration
+	classifierConfig := &classifier.ClassifierConfig{
+		Type:              classifierType,
+		RulesPath:         rulesPath,
+		ThreatDetector:    threatDetector,
+		FallbackEnabled:   true,
+		CVEDataPath:       cveDataPath,
+		CVEAPIKey:         cveAPIKey,
+		CVEAPIEndpoint:    cveAPIEndpoint,
+		CVEUpdateInterval: cveUpdateInterval,
 	}
 
-	eventClassifier, err := CreateAdvancedClassifier(classifierConfig, threatDetector)
+	// Create classifier based on type
+	eventClassifier, err := createClassifierByType(classifierConfig, threatDetector)
 	if err != nil {
-		logrus.WithError(err).Fatal("Failed to create advanced classifier")
+		logrus.WithError(err).Fatal("Failed to create classifier")
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"classifier_type": classifierType,
+		"rules_path":      rulesPath,
+		"cve_data_path":   cveDataPath,
+		"cve_endpoint":    cveAPIEndpoint,
+	}).Info("Classifier initialized successfully")
 
 	return &TelemetryServer{
 		agents:           make(map[string]*ConnectedAgent),
@@ -529,4 +551,47 @@ func (s *TelemetryServer) CleanupInactiveAgents() {
 
 func generateSessionID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+// getEnvWithDefault returns environment variable value or default if not set
+func getEnvWithDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// createClassifierByType creates the appropriate classifier based on configuration
+func createClassifierByType(config *classifier.ClassifierConfig, threatDetector *ThreatDetector) (classifier.EventClassifierInterface, error) {
+	switch config.Type {
+	case classifier.ClassifierTypeDefault:
+		logrus.Info("Using default classifier")
+		return classifier.NewEventClassifier(threatDetector), nil
+
+	case classifier.ClassifierTypeYAML:
+		logrus.WithField("rules_path", config.RulesPath).Info("Using YAML-based classifier")
+
+		// Create the server-specific classifier config
+		serverConfig := &ClassifierConfig{
+			RulesPath:       config.RulesPath,
+			EnableHotReload: true,
+			ValidateRules:   true,
+			MetricsEnabled:  true,
+		}
+
+		return CreateAdvancedClassifier(serverConfig, threatDetector)
+
+	case classifier.ClassifierTypeCVE:
+		logrus.WithFields(logrus.Fields{
+			"cve_data_path":   config.CVEDataPath,
+			"cve_endpoint":    config.CVEAPIEndpoint,
+			"update_interval": config.CVEUpdateInterval,
+		}).Info("Using CVE-based classifier")
+
+		// Create CVE classifier (currently uses fallback implementation)
+		return classifier.NewCVEClassifier(config)
+
+	default:
+		return nil, fmt.Errorf("unknown classifier type: %s", config.Type)
+	}
 }

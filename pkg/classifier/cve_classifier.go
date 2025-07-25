@@ -1,296 +1,601 @@
 package classifier
 
 import (
+	"encoding/json"
 	"fmt"
-	"regexp"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
-	"pod-controller/pkg/common"
 	pb "pod-controller/pkg/telemetry"
+
+	"github.com/sirupsen/logrus"
 )
 
+// CVEClassifier implements CVE-based security event classification
 type CVEClassifier struct {
-	mappings         []common.CVEMapping
-	cveDatabase      map[string]common.CVEMapping
-	softwareMap      map[string][]string
-	compiledPatterns map[string]*regexp.Regexp
-	enabled          bool
-	mu               sync.RWMutex
+	mu sync.RWMutex
+
+	// Configuration
+	dataPath       string
+	apiKey         string
+	apiEndpoint    string
+	updateInterval time.Duration
+
+	// CVE database
+	cveDatabase map[string]*CVEEntry
+	lastUpdate  time.Time
+
+	// Fallback classifier
+	fallbackClassifier EventClassifierInterface
+	threatDetector     ThreatDetectorInterface
+
+	// Metrics
+	classifications int64
+	cveMatches      int64
+	apiCalls        int64
 }
 
-func NewCVEClassifier(mappings []common.CVEMapping, enabled bool) *CVEClassifier {
+// CVEEntry represents a CVE record
+type CVEEntry struct {
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
+	CVSS        float64  `json:"cvss"`
+	Severity    string   `json:"severity"`
+	References  []string `json:"references"`
+	Keywords    []string `json:"keywords"`
+	Published   string   `json:"published"`
+	Modified    string   `json:"modified"`
+}
+
+// NVDResponse represents the NIST NVD API response structure
+type NVDResponse struct {
+	Results []struct {
+		CVE struct {
+			ID           string `json:"id"`
+			Descriptions []struct {
+				Lang  string `json:"lang"`
+				Value string `json:"value"`
+			} `json:"descriptions"`
+			Published string `json:"published"`
+			Modified  string `json:"lastModified"`
+			Metrics   struct {
+				CVSSMetricV31 []struct {
+					CVSSData struct {
+						BaseScore    float64 `json:"baseScore"`
+						BaseSeverity string  `json:"baseSeverity"`
+					} `json:"cvssData"`
+				} `json:"cvssMetricV31"`
+			} `json:"metrics"`
+			References []struct {
+				URL string `json:"url"`
+			} `json:"references"`
+		} `json:"cve"`
+	} `json:"vulnerabilities"`
+	TotalResults int `json:"totalResults"`
+}
+
+// NewCVEClassifier creates a new CVE-based classifier
+func NewCVEClassifier(config *ClassifierConfig) (*CVEClassifier, error) {
+	logrus.WithFields(logrus.Fields{
+		"data_path":       config.CVEDataPath,
+		"api_endpoint":    config.CVEAPIEndpoint,
+		"update_interval": config.CVEUpdateInterval,
+	}).Info("Initializing CVE classifier")
+
+	// Create fallback classifier
+	fallback := NewEventClassifier(config.ThreatDetector)
+
+	// Validate update interval - ensure it's positive to avoid ticker panic
+	updateInterval := config.CVEUpdateInterval
+	if updateInterval <= 0 {
+		updateInterval = 24 * time.Hour // Default to 24 hours
+		logrus.WithField("default_interval", updateInterval).Warn("Invalid update interval, using default")
+	}
+
 	classifier := &CVEClassifier{
-		mappings:         mappings,
-		cveDatabase:      make(map[string]common.CVEMapping),
-		softwareMap:      make(map[string][]string),
-		compiledPatterns: make(map[string]*regexp.Regexp),
-		enabled:          enabled,
+		dataPath:           config.CVEDataPath,
+		apiKey:             config.CVEAPIKey,
+		apiEndpoint:        config.CVEAPIEndpoint,
+		updateInterval:     updateInterval,
+		cveDatabase:        make(map[string]*CVEEntry),
+		fallbackClassifier: fallback,
+		threatDetector:     config.ThreatDetector,
 	}
 
-	if enabled && len(mappings) > 0 {
-		classifier.buildDatabase()
+	// Load existing CVE data
+	if err := classifier.loadCVEData(); err != nil {
+		logrus.WithError(err).Warn("Failed to load existing CVE data, will fetch fresh data")
 	}
 
-	return classifier
+	// Start background updater only if we have a valid API endpoint
+	if config.CVEAPIEndpoint != "" {
+		go classifier.startUpdateRoutine()
+	} else {
+		logrus.Info("No CVE API endpoint configured, skipping background updates")
+	}
+
+	return classifier, nil
 }
 
-func (c *CVEClassifier) buildDatabase() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Build CVE database for fast lookup
-	for _, mapping := range c.mappings {
-		c.cveDatabase[mapping.CVEID] = mapping
-
-		// Build software mapping
-		for _, software := range mapping.Software {
-			if _, exists := c.softwareMap[software.Name]; !exists {
-				c.softwareMap[software.Name] = make([]string, 0)
-			}
-			c.softwareMap[software.Name] = append(c.softwareMap[software.Name], mapping.CVEID)
-		}
-
-		// Pre-compile regex patterns
-		for _, eventMatch := range mapping.EventMatches {
-			for _, pattern := range eventMatch.CommandPatterns {
-				if _, exists := c.compiledPatterns[pattern]; !exists {
-					if compiled, err := regexp.Compile(pattern); err == nil {
-						c.compiledPatterns[pattern] = compiled
-					}
-				}
-			}
-			for _, pattern := range eventMatch.FilePatterns {
-				if _, exists := c.compiledPatterns[pattern]; !exists {
-					if compiled, err := regexp.Compile(pattern); err == nil {
-						c.compiledPatterns[pattern] = compiled
-					}
-				}
-			}
-		}
-	}
-}
-
-func (c *CVEClassifier) ClassifyEvent(event *pb.SecurityEvent) []common.CVEReference {
-	if !c.enabled {
-		return []common.CVEReference{}
-	}
-
+// ClassifyEvent implements the EventClassifierInterface
+func (c *CVEClassifier) ClassifyEvent(event *pb.SecurityEvent) (Severity, string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	var cveRefs []common.CVEReference
+	c.classifications++
 
-	// Check all CVE mappings for matches
-	for _, mapping := range c.cveDatabase {
-		if c.matchesMapping(mapping, event) {
-			cveRef := common.CVEReference{
-				CVEID:       mapping.CVEID,
-				Description: fmt.Sprintf("CVE detected based on %s event", pb.EventType_name[int32(event.EventType)]),
-				Severity:    mapping.Severity,
-				Score:       mapping.Score,
-			}
-
-			// Add affected software if available
-			for _, software := range mapping.Software {
-				cveRef.AffectedSoftware = append(cveRef.AffectedSoftware,
-					fmt.Sprintf("%s %s", software.Name, software.VersionRange))
-			}
-
-			// Add exploit references if available
-			for _, exploit := range mapping.Exploits {
-				cveRef.References = append(cveRef.References, exploit.Description)
-			}
-
-			cveRefs = append(cveRefs, cveRef)
-		}
+	// First, try CVE-based classification
+	if severity, description := c.classifyWithCVE(event); severity != "" {
+		c.cveMatches++
+		logrus.WithFields(logrus.Fields{
+			"event_type": event.GetEventType(),
+			"cve_match":  true,
+			"severity":   severity,
+		}).Debug("CVE classification successful")
+		return severity, description
 	}
 
-	return cveRefs
+	// Fallback to default classifier
+	logrus.WithField("event_type", event.GetEventType()).Debug("No CVE match, using fallback classifier")
+	return c.fallbackClassifier.ClassifyEvent(event)
 }
 
-func (c *CVEClassifier) matchesMapping(mapping common.CVEMapping, event *pb.SecurityEvent) bool {
-	eventType := pb.EventType_name[int32(event.EventType)]
+// classifyWithCVE performs CVE-based classification
+func (c *CVEClassifier) classifyWithCVE(event *pb.SecurityEvent) (Severity, string) {
+	// Extract potential CVE indicators from the event
+	indicators := c.extractCVEIndicators(event)
 
-	for _, eventMatch := range mapping.EventMatches {
-		if eventMatch.EventType == eventType {
-			if c.matchesEventPattern(eventMatch, event) {
-				return true
-			}
+	// Check for direct CVE matches
+	for _, indicator := range indicators {
+		if cveEntry, exists := c.cveDatabase[indicator]; exists {
+			return c.createClassificationFromCVE(event, cveEntry)
 		}
 	}
 
-	return false
+	// Check for keyword matches in CVE descriptions
+	return c.classifyByKeywords(event, indicators)
 }
 
-func (c *CVEClassifier) matchesEventPattern(eventMatch common.EventMatch, event *pb.SecurityEvent) bool {
-	// Check command patterns
-	for _, pattern := range eventMatch.CommandPatterns {
-		if c.matchesPattern(pattern, event.Command) {
-			if c.matchesConditions(eventMatch.Conditions, event) {
-				return true
-			}
+// extractCVEIndicators extracts potential CVE identifiers and keywords from the event
+func (c *CVEClassifier) extractCVEIndicators(event *pb.SecurityEvent) []string {
+	var indicators []string
+
+	// Collect text from various event fields
+	var textFields []string
+	if command := event.GetCommand(); command != "" {
+		textFields = append(textFields, command)
+	}
+	if filePath := event.GetFilePath(); filePath != "" {
+		textFields = append(textFields, filePath)
+	}
+	if destIP := event.GetDestinationIp(); destIP != "" {
+		textFields = append(textFields, destIP)
+	}
+	if srcIP := event.GetSourceIp(); srcIP != "" {
+		textFields = append(textFields, srcIP)
+	}
+
+	// Extract CVE patterns and keywords
+	for _, text := range textFields {
+		if text != "" {
+			// Look for CVE-YYYY-NNNN patterns
+			patterns := c.extractCVEPatterns(text)
+			indicators = append(indicators, patterns...)
+
+			// Extract security-relevant keywords
+			keywords := c.extractSecurityKeywords(text)
+			indicators = append(indicators, keywords...)
 		}
 	}
 
-	// Check file patterns
-	for _, pattern := range eventMatch.FilePatterns {
-		if c.matchesPattern(pattern, event.FilePath) {
-			if c.matchesConditions(eventMatch.Conditions, event) {
-				return true
-			}
-		}
-	}
+	logrus.WithFields(logrus.Fields{
+		"event_type":  event.GetEventType(),
+		"command":     event.GetCommand(),
+		"file_path":   event.GetFilePath(),
+		"text_fields": textFields,
+		"indicators":  indicators,
+	}).Debug("Extracted CVE indicators")
 
-	// Check network patterns
-	for _, netPattern := range eventMatch.NetworkPatterns {
-		if c.matchesNetworkPattern(netPattern, event) {
-			if c.matchesConditions(eventMatch.Conditions, event) {
-				return true
-			}
-		}
-	}
-
-	// If no specific patterns, check conditions only
-	if len(eventMatch.CommandPatterns) == 0 && len(eventMatch.FilePatterns) == 0 && len(eventMatch.NetworkPatterns) == 0 {
-		return c.matchesConditions(eventMatch.Conditions, event)
-	}
-
-	return false
+	return indicators
 }
 
-func (c *CVEClassifier) matchesPattern(pattern, text string) bool {
-	if pattern == "" || text == "" {
+// extractCVEPatterns extracts CVE identifiers from text
+func (c *CVEClassifier) extractCVEPatterns(text string) []string {
+	var patterns []string
+
+	// Convert to uppercase for consistent matching
+	upperText := strings.ToUpper(text)
+
+	// Look for CVE pattern directly in the text using string searching
+	// Don't split on hyphens since that would break CVE-YYYY-NNNN
+	words := strings.FieldsFunc(upperText, func(r rune) bool {
+		return r == ' ' || r == '/' || r == '_' || r == '.' || r == '\t' || r == '\n'
+	})
+
+	// Also check the whole text for CVE patterns
+	allTexts := append(words, upperText)
+
+	for _, textToCheck := range allTexts {
+		// Look for CVE patterns in this text
+		if strings.Contains(textToCheck, "CVE-") {
+			// Find all CVE patterns in this text
+			start := 0
+			for {
+				index := strings.Index(textToCheck[start:], "CVE-")
+				if index == -1 {
+					break
+				}
+
+				actualStart := start + index
+				remaining := textToCheck[actualStart:]
+
+				// Extract CVE pattern
+				if len(remaining) >= 13 { // Minimum CVE length
+					// Find end of CVE pattern - look for space, underscore, or end of string
+					endIndex := len(remaining)
+					for i, char := range remaining {
+						if i > 13 && (char == ' ' || char == '_' || char == '.' || char == '/' || char == '\t') {
+							endIndex = i
+							break
+						}
+					}
+
+					potentialCVE := remaining[:endIndex]
+					if len(potentialCVE) >= 13 && isValidCVEPattern(potentialCVE) {
+						patterns = append(patterns, potentialCVE)
+					}
+				}
+
+				start = actualStart + 4 // Move past "CVE-"
+			}
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"text":     text,
+		"words":    words,
+		"patterns": patterns,
+	}).Debug("Extracted CVE patterns")
+
+	return patterns
+}
+
+// isValidCVEPattern checks if a string matches CVE-YYYY-NNNN pattern
+func isValidCVEPattern(s string) bool {
+	if len(s) < 13 || !strings.HasPrefix(s, "CVE-") {
 		return false
 	}
 
-	// Try compiled regex first
-	if compiled, exists := c.compiledPatterns[pattern]; exists {
-		return compiled.MatchString(text)
+	// Check if it has the right format: CVE-YYYY-NNNN+
+	parts := strings.Split(s, "-")
+	if len(parts) < 3 {
+		return false
 	}
 
-	// Fallback to simple string matching
-	return strings.Contains(strings.ToLower(text), strings.ToLower(pattern))
+	// parts[0] should be "CVE"
+	// parts[1] should be 4 digits (year)
+	// parts[2] should be at least 4 digits
+	if parts[0] != "CVE" {
+		return false
+	}
+
+	if len(parts[1]) != 4 {
+		return false
+	}
+
+	if len(parts[2]) < 4 {
+		return false
+	}
+
+	// Check if year and number parts are digits
+	for _, char := range parts[1] {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+
+	for i, char := range parts[2] {
+		if i < 4 && (char < '0' || char > '9') {
+			return false
+		}
+	}
+
+	return true
 }
 
-func (c *CVEClassifier) matchesNetworkPattern(pattern common.NetworkPattern, event *pb.SecurityEvent) bool {
-	// Check port matching
-	if len(pattern.Ports) > 0 {
-		foundPort := false
-		for _, port := range pattern.Ports {
-			if int32(port) == event.DestinationPort || int32(port) == event.SourcePort {
-				foundPort = true
+// extractSecurityKeywords extracts security-relevant keywords
+func (c *CVEClassifier) extractSecurityKeywords(text string) []string {
+	keywords := []string{
+		"exploit", "vulnerability", "malware", "backdoor", "trojan",
+		"ransomware", "spyware", "rootkit", "botnet", "shellcode",
+		"buffer overflow", "injection", "xss", "csrf", "privilege escalation",
+		"pkexec", "log4j", "jndi", "ldap", "setuid", "polkit",
+	}
+
+	var found []string
+	lowerText := strings.ToLower(text)
+
+	for _, keyword := range keywords {
+		if strings.Contains(lowerText, keyword) {
+			found = append(found, keyword)
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"text":     text,
+		"keywords": found,
+	}).Debug("Extracted security keywords")
+
+	return found
+}
+
+// classifyByKeywords performs keyword-based CVE classification
+func (c *CVEClassifier) classifyByKeywords(event *pb.SecurityEvent, indicators []string) (Severity, string) {
+	for _, cveEntry := range c.cveDatabase {
+		for _, cveKeyword := range cveEntry.Keywords {
+			for _, indicator := range indicators {
+				if strings.Contains(strings.ToLower(indicator), strings.ToLower(cveKeyword)) {
+					logrus.WithFields(logrus.Fields{
+						"matched_keyword": cveKeyword,
+						"indicator":       indicator,
+						"cve_id":          cveEntry.ID,
+					}).Debug("Found CVE keyword match")
+					return c.createClassificationFromCVE(event, cveEntry)
+				}
+			}
+		}
+	}
+
+	return "", ""
+}
+
+// createClassificationFromCVE creates a classification based on CVE data
+func (c *CVEClassifier) createClassificationFromCVE(event *pb.SecurityEvent, cve *CVEEntry) (Severity, string) {
+	severity := c.mapCVSSToSeverity(cve.CVSS)
+
+	description := fmt.Sprintf("CVE Match: %s - %s (CVSS: %.1f)",
+		cve.ID,
+		cve.Description[:min(100, len(cve.Description))],
+		cve.CVSS)
+
+	return severity, description
+}
+
+// mapCVSSToSeverity maps CVSS score to our severity levels
+func (c *CVEClassifier) mapCVSSToSeverity(cvss float64) Severity {
+	switch {
+	case cvss >= 9.0:
+		return SeverityCritical
+	case cvss >= 7.0:
+		return SeverityHigh
+	case cvss >= 4.0:
+		return SeverityWarn
+	case cvss > 0.0:
+		return SeverityLow
+	default:
+		return SeverityLow
+	}
+}
+
+// loadCVEData loads CVE data from local file
+func (c *CVEClassifier) loadCVEData() error {
+	if _, err := os.Stat(c.dataPath); os.IsNotExist(err) {
+		logrus.WithField("path", c.dataPath).Info("CVE data file doesn't exist, will create on first update")
+		return nil
+	}
+
+	data, err := os.ReadFile(c.dataPath)
+	if err != nil {
+		return fmt.Errorf("failed to read CVE data file: %w", err)
+	}
+
+	var cveData map[string]*CVEEntry
+	if err := json.Unmarshal(data, &cveData); err != nil {
+		return fmt.Errorf("failed to unmarshal CVE data: %w", err)
+	}
+
+	c.cveDatabase = cveData
+	c.lastUpdate = time.Now()
+
+	logrus.WithField("count", len(c.cveDatabase)).Info("Loaded CVE database")
+	return nil
+}
+
+// saveCVEData saves CVE data to local file
+func (c *CVEClassifier) saveCVEData() error {
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(c.dataPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(c.cveDatabase, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal CVE data: %w", err)
+	}
+
+	if err := os.WriteFile(c.dataPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write CVE data file: %w", err)
+	}
+
+	logrus.WithField("path", c.dataPath).Debug("CVE data saved")
+	return nil
+}
+
+// startUpdateRoutine starts the background CVE data update routine
+func (c *CVEClassifier) startUpdateRoutine() {
+	ticker := time.NewTicker(c.updateInterval)
+	defer ticker.Stop()
+
+	// Initial update if database is empty or old
+	if len(c.cveDatabase) == 0 || time.Since(c.lastUpdate) > c.updateInterval {
+		if err := c.updateCVEData(); err != nil {
+			logrus.WithError(err).Error("Initial CVE data update failed")
+		}
+	}
+
+	for range ticker.C {
+		if err := c.updateCVEData(); err != nil {
+			logrus.WithError(err).Error("CVE data update failed")
+		}
+	}
+}
+
+// updateCVEData fetches fresh CVE data from NIST NVD API
+func (c *CVEClassifier) updateCVEData() error {
+	c.apiCalls++
+
+	logrus.Info("Updating CVE database from NIST NVD API")
+
+	// For demo purposes, fetch recent CVEs (last 30 days)
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -30)
+
+	url := fmt.Sprintf("%s?pubStartDate=%s&pubEndDate=%s&resultsPerPage=100",
+		c.apiEndpoint,
+		startDate.Format("2006-01-02T15:04:05.000"),
+		endDate.Format("2006-01-02T15:04:05.000"))
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.apiKey != "" {
+		req.Header.Set("X-API-KEY", c.apiKey)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch CVE data: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var nvdResponse NVDResponse
+	if err := json.Unmarshal(body, &nvdResponse); err != nil {
+		return fmt.Errorf("failed to unmarshal NVD response: %w", err)
+	}
+
+	// Process and store CVE entries
+	c.mu.Lock()
+	newEntries := 0
+	for _, result := range nvdResponse.Results {
+		cve := result.CVE
+
+		// Extract description
+		description := ""
+		for _, desc := range cve.Descriptions {
+			if desc.Lang == "en" {
+				description = desc.Value
 				break
 			}
 		}
-		if !foundPort {
-			return false
+
+		// Extract CVSS score and severity
+		cvss := 0.0
+		severity := "UNKNOWN"
+		if len(cve.Metrics.CVSSMetricV31) > 0 {
+			cvss = cve.Metrics.CVSSMetricV31[0].CVSSData.BaseScore
+			severity = cve.Metrics.CVSSMetricV31[0].CVSSData.BaseSeverity
 		}
-	}
 
-	// Check destination ranges (simplified implementation)
-	if len(pattern.DestinationRanges) > 0 {
-		for _, rangePattern := range pattern.DestinationRanges {
-			if strings.Contains(event.DestinationIp, rangePattern) {
-				return true
-			}
+		// Extract references
+		var references []string
+		for _, ref := range cve.References {
+			references = append(references, ref.URL)
 		}
-		return false
-	}
 
-	return true
-}
+		// Generate keywords from description
+		keywords := c.generateKeywordsFromDescription(description)
 
-func (c *CVEClassifier) matchesConditions(conditions []common.MatchCondition, event *pb.SecurityEvent) bool {
-	if len(conditions) == 0 {
-		return true
-	}
-
-	for _, condition := range conditions {
-		if !c.evaluateCondition(condition, event) {
-			return false
+		entry := &CVEEntry{
+			ID:          cve.ID,
+			Description: description,
+			CVSS:        cvss,
+			Severity:    severity,
+			References:  references,
+			Keywords:    keywords,
+			Published:   cve.Published,
+			Modified:    cve.Modified,
 		}
-	}
 
-	return true
-}
-
-func (c *CVEClassifier) evaluateCondition(condition common.MatchCondition, event *pb.SecurityEvent) bool {
-	var fieldValue string
-
-	switch condition.Field {
-	case "uid":
-		fieldValue = fmt.Sprintf("%d", event.Uid)
-	case "gid":
-		fieldValue = fmt.Sprintf("%d", event.Gid)
-	case "pid":
-		fieldValue = fmt.Sprintf("%d", event.Pid)
-	case "command":
-		fieldValue = event.Command
-	case "file_path":
-		fieldValue = event.FilePath
-	case "destination_ip":
-		fieldValue = event.DestinationIp
-	case "destination_port":
-		fieldValue = fmt.Sprintf("%d", event.DestinationPort)
-	case "source_port":
-		fieldValue = fmt.Sprintf("%d", event.SourcePort)
-	default:
-		return false
-	}
-
-	switch condition.Operator {
-	case "equals":
-		return fieldValue == condition.Value
-	case "not_equals":
-		return fieldValue != condition.Value
-	case "contains":
-		return strings.Contains(strings.ToLower(fieldValue), strings.ToLower(condition.Value))
-	case "matches":
-		if compiled, err := regexp.Compile(condition.Value); err == nil {
-			return compiled.MatchString(fieldValue)
+		if _, exists := c.cveDatabase[cve.ID]; !exists {
+			newEntries++
 		}
-		return false
-	default:
-		return false
+		c.cveDatabase[cve.ID] = entry
 	}
-}
+	c.lastUpdate = time.Now()
+	c.mu.Unlock()
 
-func (c *CVEClassifier) GetCVEsBySoftware(software string) []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if cves, exists := c.softwareMap[software]; exists {
-		return cves
+	// Save updated data
+	if err := c.saveCVEData(); err != nil {
+		logrus.WithError(err).Error("Failed to save updated CVE data")
 	}
-	return []string{}
-}
 
-func (c *CVEClassifier) ReloadMappings(mappings []common.CVEMapping, enabled bool) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.mappings = mappings
-	c.enabled = enabled
-	c.cveDatabase = make(map[string]common.CVEMapping)
-	c.softwareMap = make(map[string][]string)
-	c.compiledPatterns = make(map[string]*regexp.Regexp)
-
-	if enabled && len(mappings) > 0 {
-		c.buildDatabase()
-	}
+	logrus.WithFields(logrus.Fields{
+		"total_cves":  len(c.cveDatabase),
+		"new_entries": newEntries,
+		"api_results": nvdResponse.TotalResults,
+	}).Info("CVE database updated")
 
 	return nil
 }
 
-func (c *CVEClassifier) IsEnabled() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.enabled
+// generateKeywordsFromDescription extracts keywords from CVE description
+func (c *CVEClassifier) generateKeywordsFromDescription(description string) []string {
+	var keywords []string
+
+	// Common security keywords to extract
+	securityTerms := []string{
+		"buffer overflow", "code injection", "sql injection", "xss", "csrf",
+		"privilege escalation", "remote code execution", "denial of service",
+		"authentication bypass", "directory traversal", "information disclosure",
+		"memory corruption", "use after free", "null pointer dereference",
+	}
+
+	lowerDesc := strings.ToLower(description)
+	for _, term := range securityTerms {
+		if strings.Contains(lowerDesc, term) {
+			keywords = append(keywords, term)
+		}
+	}
+
+	return keywords
 }
 
-func (c *CVEClassifier) GetDatabaseSize() int {
+// GetMetrics returns classifier metrics
+func (c *CVEClassifier) GetMetrics() map[string]interface{} {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.cveDatabase)
+
+	return map[string]interface{}{
+		"total_classifications": c.classifications,
+		"cve_matches":           c.cveMatches,
+		"api_calls":             c.apiCalls,
+		"cve_database_size":     len(c.cveDatabase),
+		"last_update":           c.lastUpdate.Format(time.RFC3339),
+		"classifier_type":       "cve",
+	}
+}
+
+// Helper function
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
