@@ -1,0 +1,501 @@
+# Security Monitoring Rules Configuration
+# This file defines what and how the security monitoring system watches for threats
+
+apiVersion: v1
+kind: SecurityRules
+metadata:
+  name: default-security-rules
+  version: "1.0.0"
+  description: "Default security monitoring rules for RASP system"
+  last_updated: "2024-01-01T00:00:00Z"
+  created_by: "security-team"
+  tags: ["default", "production", "v1.0"]
+  documentation: "https://docs.example.com/security-rules"
+
+# Global monitoring settings
+global:
+  # Default severity levels
+  default_severity: "LOW"
+  # Enable/disable rule categories
+  enable_process_monitoring: true
+  enable_network_monitoring: true
+  enable_file_monitoring: true
+  enable_security_monitoring: true
+
+  # Rate limiting settings
+  rate_limit:
+    events_per_second: 100
+    burst_size: 200
+
+  # Alert aggregation settings
+  alert_aggregation:
+    window_minutes: 5
+    max_count: 10
+
+# Event type configurations
+event_types:
+  EXEC:
+    enabled: true
+    default_severity: "LOW"
+    monitor_all: true
+
+  OPEN:
+    enabled: true
+    default_severity: "LOW"
+    monitor_all: true
+
+  CONNECT:
+    enabled: true
+    default_severity: "LOW"
+    monitor_all: true
+
+  FORK:
+    enabled: true
+    default_severity: "LOW"
+    monitor_all: false  # Only monitor suspicious forks
+
+  PTRACE:
+    enabled: true
+    default_severity: "HIGH"
+    monitor_all: true
+
+  SETUID:
+    enabled: true
+    default_severity: "HIGH"
+    monitor_all: true
+
+  SETGID:
+    enabled: true
+    default_severity: "HIGH"
+    monitor_all: true
+
+  MOUNT:
+    enabled: true
+    default_severity: "WARN"
+    monitor_all: true
+
+  UMOUNT:
+    enabled: true
+    default_severity: "WARN"
+    monitor_all: true
+
+  CAPSET:
+    enabled: true
+    default_severity: "CRITICAL"
+    monitor_all: true
+
+  BPF_PROG:
+    enabled: true
+    default_severity: "CRITICAL"
+    monitor_all: true
+
+  SECCOMP:
+    enabled: true
+    default_severity: "HIGH"
+    monitor_all: true
+
+  SOCKET:
+    enabled: true
+    default_severity: "LOW"
+    monitor_all: false
+
+  BIND:
+    enabled: true
+    default_severity: "WARN"
+    monitor_all: true
+
+  ACCEPT:
+    enabled: true
+    default_severity: "LOW"
+    monitor_all: false
+
+  CHMOD:
+    enabled: true
+    default_severity: "WARN"
+    monitor_all: true
+
+# Command monitoring rules
+commands:
+  # Suspicious commands that should trigger alerts
+  suspicious:
+    - name: "Network Tools"
+      severity: "HIGH"
+      patterns:
+        - "nc"
+        - "netcat"
+        - "ncat"
+        - "socat"
+        - "wget"
+        - "curl"
+        - "telnet"
+        - "ftp"
+      conditions:
+        - uid_is_root: true
+          severity: "CRITICAL"
+        - external_network: true
+          severity: "HIGH"
+
+    - name: "Shells and Interpreters"
+      severity: "WARN"
+      patterns:
+        - "bash"
+        - "sh"
+        - "ash"
+        - "dash"
+        - "zsh"
+        - "python"
+        - "perl"
+        - "ruby"
+        - "php"
+        - "node"
+      conditions:
+        - uid_is_root: true
+          severity: "HIGH"
+        - in_container: true
+          severity: "HIGH"
+
+    - name: "System Modification"
+      severity: "HIGH"
+      patterns:
+        - "chmod"
+        - "chown"
+        - "chattr"
+        - "mount"
+        - "umount"
+      conditions:
+        - uid_is_root: true
+          severity: "CRITICAL"
+        - target_is_sensitive: true
+          severity: "CRITICAL"
+
+    - name: "Network Analysis"
+      severity: "HIGH"
+      patterns:
+        - "tcpdump"
+        - "wireshark"
+        - "tshark"
+        - "nmap"
+        - "masscan"
+        - "netstat"
+
+    - name: "Process Inspection"
+      severity: "HIGH"
+      patterns:
+        - "strace"
+        - "ltrace"
+        - "ptrace"
+        - "gdb"
+        - "lldb"
+      conditions:
+        - target_pid_is_privileged: true
+          severity: "CRITICAL"
+
+    - name: "Container Management"
+      severity: "WARN"
+      patterns:
+        - "docker"
+        - "kubectl"
+        - "crictl"
+        - "runc"
+        - "containerd"
+      conditions:
+        - uid_is_root: true
+          severity: "HIGH"
+        - unauthorized_context: true
+          severity: "CRITICAL"
+
+    - name: "Crypto Mining"
+      severity: "CRITICAL"
+      patterns:
+        - "minerd"
+        - "cpuminer"
+        - "xmrig"
+        - "stratum"
+
+    - name: "File Transfer"
+      severity: "WARN"
+      patterns:
+        - "scp"
+        - "rsync"
+        - "sftp"
+      conditions:
+        - external_destination: true
+          severity: "HIGH"
+
+  # Trusted processes that should not trigger alerts
+  trusted:
+    - name: "Container Runtime"
+      patterns:
+        - "runc:[2:INIT]"
+        - "containerd"
+        - "containerd-shim"
+        - "docker"
+        - "cri-o"
+        - "cri-containerd"
+
+    - name: "Kubernetes Components"
+      patterns:
+        - "kubelet"
+        - "k3s"
+        - "k3s-agent"
+        - "k3s-server"
+        - "kube-apiserver"
+        - "kube-scheduler"
+        - "kube-controller-manager"
+        - "etcd"
+
+    - name: "System Processes"
+      patterns:
+        - "systemd"
+        - "systemd-oomd"
+        - "systemd-journal"
+        - "thermald"
+        - "dbus"
+        - "NetworkManager"
+
+    - name: "Monitoring Agents"
+      patterns:
+        - "agent"
+        - "tokio-runtime"
+        - "prometheus"
+        - "grafana-agent"
+
+    - name: "Browser Processes"
+      patterns:
+        - "Chrome_IOThread"
+        - "firefox"
+        - "chrome"
+
+# File system monitoring rules
+filesystem:
+  # Sensitive files that should trigger alerts when accessed
+  sensitive_files:
+    - name: "Authentication Files"
+      severity: "HIGH"
+      paths:
+        - "/etc/shadow"
+        - "/etc/passwd"
+        - "/etc/sudoers"
+        - "/root/.ssh/authorized_keys"
+        - "/home/*/.ssh/authorized_keys"
+      conditions:
+        - uid_is_root: false
+          severity: "CRITICAL"
+        - write_access: true
+          severity: "CRITICAL"
+
+    - name: "SSH Configuration"
+      severity: "HIGH"
+      paths:
+        - "/etc/ssh/sshd_config"
+        - "/etc/ssh/ssh_config"
+        - "/root/.ssh/config"
+      conditions:
+        - write_access: true
+          severity: "CRITICAL"
+
+    - name: "Kubernetes Secrets"
+      severity: "CRITICAL"
+      paths:
+        - "/etc/kubernetes/admin.conf"
+        - "/etc/kubernetes/pki/"
+        - "/var/run/secrets/kubernetes.io/"
+        - "/var/lib/kubelet/pki/"
+      conditions:
+        - unauthorized_access: true
+          severity: "CRITICAL"
+
+    - name: "Container Runtime"
+      severity: "HIGH"
+      paths:
+        - "/var/run/docker.sock"
+        - "/var/lib/docker/"
+        - "/var/lib/containerd/"
+      conditions:
+        - unauthorized_access: true
+          severity: "CRITICAL"
+
+  # Sensitive directories
+  sensitive_directories:
+    - name: "SSL/TLS Certificates"
+      severity: "HIGH"
+      paths:
+        - "/etc/ssl/private/"
+        - "/etc/ssl/certs/"
+        - "/etc/pki/"
+      conditions:
+        - write_access: true
+          severity: "CRITICAL"
+
+    - name: "Security Configuration"
+      severity: "HIGH"
+      paths:
+        - "/etc/security/"
+        - "/etc/apparmor.d/"
+        - "/etc/selinux/"
+
+    - name: "System Binaries"
+      severity: "WARN"
+      paths:
+        - "/usr/bin/"
+        - "/usr/sbin/"
+        - "/bin/"
+        - "/sbin/"
+      conditions:
+        - write_access: true
+          severity: "CRITICAL"
+
+  # Paths to monitor for changes
+  watch_paths:
+    - name: "System Configuration"
+      paths:
+        - "/etc/"
+      events: ["OPEN", "CHMOD"]
+      severity: "WARN"
+      conditions:
+        - write_access: true
+          severity: "HIGH"
+
+    - name: "Process Information"
+      paths:
+        - "/proc/"
+      events: ["OPEN"]
+      severity: "LOW"
+      exclude_processes: ["trusted"]
+
+    - name: "System Information"
+      paths:
+        - "/sys/"
+      events: ["OPEN"]
+      severity: "LOW"
+      exclude_processes: ["trusted"]
+
+# Network monitoring rules
+network:
+  # Suspicious ports
+  suspicious_ports:
+    - name: "Administrative Services"
+      severity: "HIGH"
+      ports: [22, 23, 3389]  # SSH, Telnet, RDP
+      conditions:
+        - external_destination: true
+          severity: "CRITICAL"
+
+    - name: "Database Services"
+      severity: "HIGH"
+      ports: [3306, 5432, 27017, 6379]  # MySQL, PostgreSQL, MongoDB, Redis
+      conditions:
+        - external_destination: true
+          severity: "CRITICAL"
+        - unauthorized_process: true
+          escalate_severity: "HIGH"
+
+    - name: "Development Services"
+      severity: "WARN"
+      ports: [8080, 8000, 3000, 5000, 9000]
+      conditions:
+        - external_destination: true
+          severity: "HIGH"
+
+  # External IP ranges to monitor
+  external_networks:
+    - name: "Suspicious Ranges"
+      severity: "HIGH"
+      ranges:
+        - "192.0.2.0/24"  # Test network - should not be used in production
+        - "203.0.113.0/24"  # Test network
+
+  # Private networks (considered safe)
+  private_networks:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "127.0.0.0/8"
+    - "::1/128"
+    - "fc00::/7"
+
+# Process behavior rules
+process:
+  # Process spawn rate limits
+  spawn_limits:
+    default:
+      max_per_minute: 50
+      severity: "WARN"
+    container:
+      max_per_minute: 100
+      severity: "HIGH"
+    root_process:
+      max_per_minute: 20
+      severity: "CRITICAL"
+
+  # Memory and resource limits
+  resource_limits:
+    memory_threshold_mb: 1024
+    cpu_threshold_percent: 80
+
+  # Privilege escalation monitoring
+  privilege_escalation:
+    setuid_monitoring: true
+    setgid_monitoring: true
+    capability_monitoring: true
+    severity: "CRITICAL"
+
+# Container-specific rules
+containers:
+  # Default container policies
+  default_policy:
+    monitor_privileged: true
+    monitor_host_network: true
+    monitor_host_pid: true
+
+  # Specific container overrides
+  policies:
+    - name: "system-containers"
+      patterns: ["kube-system/*", "kube-public/*"]
+      rules:
+        reduced_monitoring: true
+        severity_adjustment: -1  # Lower severity by one level
+
+    - name: "monitoring-agents"
+      patterns: ["monitoring/*", "security/*"]
+      rules:
+        trusted_processes: true
+        severity_adjustment: -1
+
+# Custom rules for specific environments
+custom_rules:
+  # Development environment rules
+  development:
+    enabled: false
+    rules:
+      reduce_shell_alerts: true
+      allow_debugging_tools: true
+
+  # Production environment rules
+  production:
+    enabled: true
+    rules:
+      strict_privilege_monitoring: true
+      zero_tolerance_crypto_mining: true
+      enhanced_network_monitoring: true
+
+# Notification and response rules
+notifications:
+  # Alert routing based on severity
+  routing:
+    CRITICAL:
+      immediate: true
+      channels: ["slack", "email", "webhook"]
+
+    HIGH:
+      delay_seconds: 30
+      channels: ["slack", "email"]
+
+    WARN:
+      delay_seconds: 300
+      channels: ["slack"]
+
+    LOW:
+      delay_seconds: 600
+      channels: ["log"]
+

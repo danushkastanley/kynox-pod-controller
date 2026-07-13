@@ -1,0 +1,154 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+*.pprof
+
+# Go binary artifacts
+controller
+pod-controller
+rasp-controller
+main
+
+# Go module cache and vendor
+go.sum.bak
+vendor/
+
+# Build directories
+bin/
+dist/
+build/
+out/
+target/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.envrc
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Coverage reports
+coverage.out
+coverage.html
+*.cover
+
+# Debug files
+debug
+*.debug
+core
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+Godeps/
+
+# Air (live reload tool) temporary files
+tmp/
+
+# GoReleaser artifacts
+dist/
+*.tar.gz
+*.zip
+
+# Local development files
+local-*
+*.local
+dev-*
+
+# Backup files
+*.bak
+*.backup
+
+# Archives
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Kubernetes secrets and temporary files
+secret*.yaml
+*-secret.yaml
+*.yaml.bak
+*.yml.bak
+
+# Helm charts temporary files
+charts/*.tgz
+
+# Local certificate files
+*.crt
+*.key
+*.pem
+ca-certificates.crt
+
+# Generated protobuf files (uncomment if you want to regenerate them)
+# pkg/telemetry/*.pb.go
+# pkg/telemetry/*_grpc.pb.go
+
+# Configuration files with sensitive data
+config-local.yaml
+*-local.yaml
+
+# Test data and fixtures
+test-data/
+fixtures/
+
+# Documentation build artifacts
+docs/_build/
+docs/site/
+
+# Monitoring and metrics
+prometheus_data/
+grafana_data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Container runtime files
+*.oci.tar 

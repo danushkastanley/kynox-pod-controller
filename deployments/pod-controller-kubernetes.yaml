@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rasp-controller
+  labels:
+    app: rasp-controller
+spec:
+  type: ClusterIP
+  ports:
+    - port: 50051
+      targetPort: 50051
+      protocol: TCP
+      name: grpc
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http-metrics
+  selector:
+    app: rasp-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rasp-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rasp-controller
+  template:
+    metadata:
+      labels:
+        app: rasp-controller
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          # Replace with a published, immutable release tag or digest.
+          image: ghcr.io/danushkastanley/pod-controller:0.1.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          envFrom:
+            - secretRef:
+                name: rasp-controller-secrets
+                optional: true
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: LOG_LEVEL
+              value: "info"
+            - name: HTTP_PORT
+              value: "8080"
+            - name: MTLS_ENABLED
+              value: "true"
+            - name: MTLS_CA_CERT_FILE
+              value: /etc/rasp/tls/ca/ca.crt
+            - name: MTLS_SERVER_CERT_FILE
+              value: /etc/rasp/tls/server/tls.crt
+            - name: MTLS_SERVER_KEY_FILE
+              value: /etc/rasp/tls/server/tls.key
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/.env
+              subPath: .env
+            - name: mtls-ca
+              mountPath: /etc/rasp/tls/ca
+              readOnly: true
+            - name: controller-tls
+              mountPath: /etc/rasp/tls/server
+              readOnly: true
+          ports:
+            - containerPort: 50051
+              name: grpc
+            - containerPort: 8080
+              name: http-metrics
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 1
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+      volumes:
+        - name: config-volume
+          configMap:
+            name: rasp-controller-config
+        - name: mtls-ca
+          secret:
+            secretName: rasp-mtls-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: controller-tls
+          secret:
+            secretName: rasp-controller-tls
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key

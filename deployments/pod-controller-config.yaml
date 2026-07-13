@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rasp-controller-config
+data:
+  .env: |
+    # Controller Configuration
+    PORT=50051
+    NODE_NAME=${NODE_NAME}
+    POD_NAME=${POD_NAME}
+    LOG_LEVEL=info
+    DEBUG=info
+
+    # Classifier Configuration
+    CLASSIFIER_TYPE=yaml  # Options: default, yaml, cve
+    RULES_PATH=rules/default-rules.yaml
+
+    # CVE Classifier Configuration (used when CLASSIFIER_TYPE=cve)
+    CVE_DATA_PATH=data/cve-database.json
+    CVE_API_ENDPOINT=https://services.nvd.nist.gov/rest/json/cves/2.0
+    CVE_UPDATE_INTERVAL=24h
+
+    # ===========================================
+    # NAMESPACE FILTERING (Reduces False Positives)
+    # ===========================================
+    # Option 1: MONITOR_NAMESPACES - Only monitor specific namespaces (recommended)
+    # Comma-separated list. If set, ONLY these namespaces are monitored.
+    # Example: MONITOR_NAMESPACES=default,production,staging
+    MONITOR_NAMESPACES=default,security-test
+
+    # Option 2: EXCLUDE_NAMESPACES - Add namespaces to exclude (in addition to defaults)
+    # Default excluded: kube-system, kube-public, monitoring, logging, etc.
+    # EXCLUDE_NAMESPACES=my-system-namespace,another-namespace
+
+    # Option 3: INCLUDE_SYSTEM_NAMESPACES=true - Monitor ALL namespaces (not recommended)
+    # INCLUDE_SYSTEM_NAMESPACES=false
+
+    # ===========================================
+    # ALERT CONFIGURATION
+    # ===========================================
+    # Set SLACK_WEBHOOK_URL, ALERT_WEBHOOK_URL, CVE_API_KEY and
+    # CLASSIFIER_ADMIN_TOKEN through the rasp-controller-secrets Secret.
+    SLACK_CHANNEL="#security-alerts"
+
+    # Alert Filtering
+    # Only send alerts for these event types
+    ALERT_EVENT_TYPES=EXEC,CONNECT,PTRACE,SETUID,SETGID,MOUNT,CAPSET,CHMOD
+
+    # Minimum severity level for alerts: LOW, WARN, HIGH, CRITICAL
+    # Recommended: HIGH (reduces noise significantly)
+    ALERT_MIN_LEVEL=HIGH
+
+    # Rate limit: max alerts per minute
+    ALERT_RATE_LIMIT=10

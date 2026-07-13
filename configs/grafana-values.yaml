@@ -1,0 +1,203 @@
+# Create this secret before installing the chart. Do not commit credentials.
+admin:
+  existingSecret: grafana-admin-credentials
+  userKey: admin-user
+  passwordKey: admin-password
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+
+# Persistence
+persistence:
+  enabled: false
+  # For production, enable persistent storage:
+  # enabled: true
+  # size: 10Gi
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Data sources configuration
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.logging.svc.cluster.local:80
+        access: proxy
+        isDefault: true
+        editable: true
+        jsonData:
+          httpMethod: POST
+          manageAlerts: true
+          prometheusType: Prometheus
+          prometheusVersion: 2.40.0
+          cacheLevel: 'High'
+          disableRecordingRules: false
+          incrementalQueryOverlapWindow: 10m
+
+# Dashboard providers
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: 'rasp-dashboards'
+        orgId: 1
+        folder: 'RASP Security'
+        type: file
+        disableDeletion: false
+        editable: true
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards/rasp
+
+
+# Dashboard configurations
+dashboards:
+  rasp:
+    rasp-security-overview:
+      gnetId: null
+      revision: 1
+      datasource: Prometheus
+      json: |
+        {
+          "dashboard": {
+            "id": null,
+            "uid": "rasp-security-overview",
+            "title": "RASP Security Overview",
+            "tags": ["rasp", "security", "monitoring"],
+            "timezone": "browser",
+            "refresh": "30s",
+            "time": {
+              "from": "now-1h",
+              "to": "now"
+            },
+            "panels": [
+              {
+                "id": 1,
+                "title": "RASP System Status",
+                "type": "stat",
+                "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+                "targets": [
+                  {
+                    "expr": "up{job=\"rasp-controller\"}",
+                    "legendFormat": "Controller Status",
+                    "refId": "A"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "thresholds": {
+                      "steps": [
+                        {"color": "red", "value": 0},
+                        {"color": "green", "value": 1}
+                      ]
+                    },
+                    "mappings": [
+                      {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                      {"options": {"1": {"text": "UP"}}, "type": "value"}
+                    ]
+                  }
+                }
+              },
+              {
+                "id": 2,
+                "title": "Events per Second",
+                "type": "graph",
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+                "targets": [
+                  {
+                    "expr": "rate(rasp_events_total[5m])",
+                    "legendFormat": "{{ event_type }}",
+                    "refId": "A"
+                  }
+                ],
+                "yAxes": [
+                  {"label": "Events/sec", "show": true},
+                  {"show": false}
+                ]
+              },
+              {
+                "id": 3,
+                "title": "Threat Detection Rate",
+                "type": "graph",
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+                "targets": [
+                  {
+                    "expr": "rate(rasp_threats_detected_total[5m])",
+                    "legendFormat": "{{ severity }}",
+                    "refId": "A"
+                  }
+                ],
+                "yAxes": [
+                  {"label": "Threats/sec", "show": true},
+                  {"show": false}
+                ]
+              }
+            ]
+          }
+        }
+
+# Grafana configuration
+grafana.ini:
+  analytics:
+    check_for_updates: true
+  log:
+    mode: console
+  grafana_net:
+    url: https://grafana.net
+  server:
+    domain: localhost
+    root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+  security:
+    disable_gravatar: true
+  users:
+    allow_sign_up: false
+    auto_assign_org: true
+    auto_assign_org_role: Viewer
+  auth.anonymous:
+    enabled: false
+
+# Plugins to install
+plugins: []
+
+# Sidecar configuration for automatic dashboard loading
+sidecar:
+  enabled: true
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    folder: /tmp/dashboards
+    defaultFolderName: "General"
+    searchNamespace: default
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    labelValue: "1"
+
+# ImageRenderer (for PDF/PNG exports)
+imageRenderer:
+  enabled: false
+
+# SMTP configuration (for alerting)
+smtp:
+  enabled: false
+  # host: localhost:587
+  # user: ""
+  # password: ""
+  # from_address: admin@grafana.localhost
+
+# LDAP configuration (for enterprise authentication)
+ldap:
+  enabled: false
