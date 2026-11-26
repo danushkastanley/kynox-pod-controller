@@ -23,8 +23,12 @@ data:
     # ===========================================
     # NAMESPACE FILTERING (Reduces False Positives)
     # ===========================================
+    # Namespace filters apply to events attributed to a pod. Events the agent cannot
+    # attribute to a pod (host processes) are reported with namespace "unknown" and are
+    # always processed, because host activity is where container escapes land.
+    #
     # Option 1: MONITOR_NAMESPACES - Only monitor specific namespaces (recommended)
-    # Comma-separated list. If set, ONLY these namespaces are monitored.
+    # Comma-separated list. If set, ONLY pod events from these namespaces are monitored.
     # Example: MONITOR_NAMESPACES=default,production,staging
     MONITOR_NAMESPACES=default,security-test
 
