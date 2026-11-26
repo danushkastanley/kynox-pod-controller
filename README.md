@@ -1,20 +1,52 @@
-# Pod-Controller: RASP Security Controller for Kubernetes
+# Kynox Pod Controller: runtime threat detection for Kubernetes
 
-A Kubernetes-native Runtime Application Self-Protection (RASP) controller that provides real-time security monitoring, threat detection, and incident response for containerized applications. The controller processes security events from eBPF-based agents and provides intelligent threat analysis with configurable alerting.
+The central component of Kynox. It receives security events from the eBPF node
+agents ([`kynox-pod-agent`](https://github.com/danushkastanley/kynox-pod-agent)) over
+mutual TLS, classifies them with YAML rules and built-in heuristics, and exports the
+results as structured logs, Prometheus metrics and Slack or webhook alerts.
+
+> [!NOTE]
+> **Project status: parked.** Kynox started as MSc research into eBPF runtime security
+> for Kubernetes. It is kept in a working state but is not under active feature
+> development. See [Project status](#project-status) for what is verified and what is not.
 
 > [!IMPORTANT]
 > This project is pre-1.0 and should be evaluated in a non-production cluster
 > before deployment. It provides security telemetry and detection signals; it is
 > not a substitute for Kubernetes hardening, admission control, or incident response.
 
-The controller and [`pod-agent`](https://github.com/danushkastanley/pod-agent)
-must use matching release versions because they share a gRPC protocol.
+The controller and agent must be built from matching commits because they share a
+gRPC protocol. Kubernetes object names keep the project's earlier `rasp-` prefix
+(for example the `rasp-controller` Deployment and Service).
+
+## Project status
+
+- **Verified in November 2026.** Builds for x86_64 and arm64. On a kind cluster
+  (arm64, Linux 7.0) using the manifests and ConfigMap in this repository, the
+  controller accepts agent sessions over mutual TLS, keeps a single session per agent
+  across restarts, classifies around 2,500 events per second, and a scripted attack
+  (reading `/etc/shadow`, `chmod 4777`, outbound connections to port 4444) is
+  classified CRITICAL.
+- **Detection only.** Kynox reports suspicious activity; it does not block it. For
+  in-kernel enforcement, look at Cilium Tetragon or KubeArmor. For a mature,
+  widely adopted detection engine, look at Falco.
+- **No published images or releases.** Build images from the Dockerfile; the
+  manifests reference placeholder image tags.
+- **Known limitations:**
+  - Every event is logged at info level or above, which is heavy on busy clusters.
+  - `rasp_rules_loaded` is never set, and `ACCEPT` and `SOCKET` events have no
+    classification rules.
+  - Detection evaluates one event at a time, with per-container rate heuristics.
+    There is no correlation across pods or nodes.
+  - The CVE classifier matches CVE identifiers and keywords in event text; it does
+    not use image vulnerability data.
+- Issues and pull requests are welcome, but responses may be slow. Report
+  vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## FEATURES
 
 ### Real-time Security Event Processing
 - **Stream Processing**: High-throughput gRPC event streaming from distributed agents
-- **Event Correlation**: Correlates events across containers, pods, and nodes
 - **Session Management**: Robust agent connection management with health monitoring
 - **Bounded Connections**: Applies an explicit connected-agent limit
 
@@ -72,7 +104,7 @@ pod-controller/
 │   └── pod-controller-config.yaml     # Configuration ConfigMap
 ├── Dockerfile                  # Multi-stage container build
 ├── go.mod                     # Go module dependencies
-└── redeploy_pod_controller.sh # Development deployment script
+└── redeploy_controller.sh # Development deployment script
 ```
 
 ### Core Components
@@ -86,7 +118,7 @@ pod-controller/
 #### Threat Detection Engine (`pkg/server/threat_detection.go`)
 - **Pattern Recognition**: Identifies known attack patterns and suspicious behaviors
 - **Risk Assessment**: Evaluates threat severity based on context and behavior
-- **Anomaly Detection**: Detects deviations from normal container behavior
+- **Rate Heuristics**: Flags unusually high process-spawn and connection rates per container
 - **Process Trust Evaluation**: Maintains allowlists of trusted system processes
 
 #### Event Classifier (`pkg/classifier/`)
@@ -128,8 +160,8 @@ docker save pod-controller:0.1.0 | sudo k3s ctr images import -
 
 ```bash
 # Clone and navigate to project
-git clone https://github.com/danushkastanley/pod-controller.git
-cd pod-controller
+git clone https://github.com/danushkastanley/kynox-pod-controller.git
+cd kynox-pod-controller
 
 # Download locked dependencies and build
 go mod download
@@ -163,7 +195,7 @@ protoc --go_out=. --go-grpc_out=. pkg/telemetry/telemetry.proto
 
 ```bash
 # Use the provided script for rapid iteration
-./redeploy_pod_controller.sh
+./redeploy_controller.sh
 ```
 
 ## CONFIGURATION
