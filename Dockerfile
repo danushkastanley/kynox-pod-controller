@@ -1,5 +1,7 @@
-# Build stage
-FROM golang:1.25-bookworm AS builder
+# Build stage runs natively and cross-compiles for the requested platform.
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /app
 
@@ -10,7 +12,7 @@ COPY cmd/ cmd/
 COPY rules/ rules/
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -o /app/controller ./cmd/controller
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -mod=readonly -o /app/controller ./cmd/controller
 
 # Create final image
 FROM gcr.io/distroless/static:nonroot
@@ -20,6 +22,7 @@ COPY --from=builder /app/controller .
 COPY --from=builder /app/rules ./rules/
 
 EXPOSE 50051
-USER nonroot:nonroot
+# Numeric UID/GID (distroless "nonroot") so kubelet can enforce runAsNonRoot.
+USER 65532:65532
 
 ENTRYPOINT ["/app/controller"]
