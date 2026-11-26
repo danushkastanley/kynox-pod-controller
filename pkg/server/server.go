@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pod-controller/pkg/alert"
@@ -62,8 +63,11 @@ type TelemetryServer struct {
 	timeout          time.Duration
 	startTime        time.Time
 	// Filtering stats
-	filteredEvents int64
+	filteredEvents atomic.Int64 // updated concurrently by agent streams
 }
+
+// unattributedNamespace labels events the agent could not attribute to a pod.
+const unattributedNamespace = "unknown"
 
 func NewTelemetryServer(timeout time.Duration) *TelemetryServer {
 	return NewTelemetryServerWithMetrics(timeout, nil)
@@ -170,25 +174,34 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	namespace := containerContext["namespace"]
 	podName := containerContext["pod_name"]
 
-	// Handle missing container context - use agent info as fallback
+	// The agent reports "unknown" when it cannot attribute a process to a pod.
 	if namespace == "" {
-		namespace = "default" // or extract from agent if available
+		namespace = unattributedNamespace
 	}
 	if podName == "" {
 		podName = agent.PodName // fallback to agent pod if target pod unknown
 	}
 
-	// Apply namespace filtering - skip events from excluded namespaces
-	if !s.namespaceFilter.ShouldMonitor(namespace) {
-		s.filteredEvents++
+	// Apply namespace filtering to pod events only. Unattributed events (host processes,
+	// or containers whose metadata could not be read) have no namespace to filter on, and
+	// host activity is where container escapes land, so they are always processed.
+	if namespace != unattributedNamespace && !s.namespaceFilter.ShouldMonitor(namespace) {
+		filtered := s.filteredEvents.Add(1)
 		// Log occasionally to avoid spam
-		if s.filteredEvents%1000 == 1 {
+		if filtered%1000 == 1 {
 			logrus.WithFields(logrus.Fields{
 				"namespace":      namespace,
-				"filtered_total": s.filteredEvents,
+				"filtered_total": filtered,
 			}).Debug("Skipping events from excluded namespace")
 		}
 		return nil // Silently skip - don't process or alert
+	}
+
+	if s.promMetrics != nil {
+		processingStart := time.Now()
+		defer func() {
+			s.promMetrics.RecordEventProcessingDuration(time.Since(processingStart).Seconds())
+		}()
 	}
 
 	// Initialize fields for logging with clear distinction between agent and target
@@ -221,7 +234,11 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 	}
 
 	// Classify event severity
+	classificationStart := time.Now()
 	severity, msg := s.classifier.ClassifyEvent(event)
+	if s.promMetrics != nil {
+		s.promMetrics.RecordClassificationDuration(time.Since(classificationStart).Seconds())
+	}
 	fields["severity"] = severity
 	fields["message"] = msg
 
@@ -288,7 +305,7 @@ func (s *TelemetryServer) processEvent(event *pb.SecurityEvent, agent *Connected
 		"should_alert": shouldAlert,
 		"event_type":   alertKey.EventType,
 		"severity":     alertKey.Severity,
-	}).Info("[CHECK] Alert aggregation check")
+	}).Debug("[CHECK] Alert aggregation check")
 
 	if shouldAlert {
 		// CRITICAL alerts bypass rate limiting for immediate response
